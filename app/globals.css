@@ -1,26 +1,21 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+/* โหลดฟ้อนก่อน Tailwind */
+@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700&display=swap');
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Tailwind directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ตั้ง class ใช้ฟ้อน Prompt */
+.font-prompt {
+  font-family: 'Prompt', sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* กำหนดพื้นฐาน body */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: white;
+  color: #1a202c; /* เทียบเท่า text-gray-900 */
+  font-family: 'Prompt', sans-serif;
 }
