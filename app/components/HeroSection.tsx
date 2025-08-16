@@ -20,7 +20,6 @@ type Props = {
 
 export default function HeroSection({
   onFindSlot,
-  bgImage = "/images/hero.jpg",
 }: Props) {
   // --- defaults: วันนี้ + เวลาปัจจุบัน (ปัดเป็นช่วง 30 นาทีถัดไป) ---
   const { todayStr, timeStr } = useMemo(() => {
@@ -57,13 +56,13 @@ export default function HeroSection({
     <section className="relative isolate min-h-[min(860px,100svh)]">
       {/* Background image */}
       <div className="absolute inset-0 -z-10">
-        <Image
+        {/* <Image
           src={bgImage}
           alt="SaiLom Hotel & Restaurant"
           fill
           priority
           className="object-cover"
-        />
+        /> */}
         {/* gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/35 to-background/95" />
         {/* subtle noise (optional) */}

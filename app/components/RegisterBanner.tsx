@@ -6,13 +6,13 @@ export default function RegisterBanner() {
   return (
     <section className="relative mt-12">
       <div className="absolute inset-0 -z-10">
-        <Image
+        {/* <Image
           src="/images/register-bg.jpg"
           alt="Register Banner"
           fill
           className="object-cover"
           priority
-        />
+        /> */}
         <div className="absolute inset-0 bg-black/55" />
       </div>
 
