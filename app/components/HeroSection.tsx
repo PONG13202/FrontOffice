@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,22 +11,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CalendarDays, Clock, Users, Search } from "lucide-react";
 
 type Props = {
   onFindSlot?: (q: { date: string; time: string; people: number }) => void;
   bgImage?: string;
 };
 
-export default function HeroSection({
-  onFindSlot,
-}: Props) {
+export default function HeroSection({ onFindSlot }: Props) {
   // --- defaults: วันนี้ + เวลาปัจจุบัน (ปัดเป็นช่วง 30 นาทีถัดไป) ---
   const { todayStr, timeStr } = useMemo(() => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
     const roundTo30 = (d: Date) => {
       const m = d.getMinutes();
-      const add = m === 0 ? 0 : 30 - (m % 30);
+      const add = m === 0 ? 0 : 30 - (m % 30 || 30);
       d.setMinutes(m + add, 0, 0);
       return d;
     };
@@ -41,8 +39,6 @@ export default function HeroSection({
 
   // --- shadcn Select ไม่ส่งค่าลงฟอร์ม: เก็บ state + hidden input ---
   const [people, setPeople] = useState<string>("2");
-
-  // optional: sync people=2 ตอนเริ่ม
   useEffect(() => setPeople("2"), []);
 
   const handleSubmit = (formData: FormData) => {
@@ -53,123 +49,119 @@ export default function HeroSection({
   };
 
   return (
-    <section className="relative isolate min-h-[min(860px,100svh)]">
-      {/* Background image */}
-      <div className="absolute inset-0 -z-10">
-        {/* <Image
-          src={bgImage}
-          alt="SaiLom Hotel & Restaurant"
-          fill
-          priority
-          className="object-cover"
-        /> */}
-        {/* gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/35 to-background/95" />
-        {/* subtle noise (optional) */}
-        <div className="pointer-events-none absolute inset-0 opacity-[0.08] mix-blend-overlay [background-image:radial-gradient(#000_1px,transparent_1px)] [background-size:12px_12px]" />
-      </div>
-
-      <div className="container mx-auto px-4 py-16 sm:py-20 lg:py-28">
-        {/* Headline */}
+    <section className="relative isolate">
+      {/* พื้นหลัง/เฮดไลน์ ตัดทอนออกได้ตามต้องการ */}
+      <div className="container mx-auto px-4 pt-6 sm:pt-10">
         <motion.div
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45 }}
-          className="max-w-2xl text-white"
+          className="max-w-2xl"
         >
-          <p className="mb-3 inline-block rounded-full bg-white/15 px-3 py-1 text-xs font-medium tracking-wide backdrop-blur">
-            Welcome to <span className="text-[#AEB3FF]">SaiLom</span>
-          </p>
-          <h1 className="text-3xl font-bold leading-tight sm:text-5xl">
+          <h1 className="text-3xl font-bold leading-tight sm:text-4xl">
             จองโต๊ะ & สั่งอาหาร
-            <br className="hidden sm:block" />
-            ง่าย รวดเร็ว ในที่เดียว
           </h1>
-          <p className="mt-4 text-white/90 sm:text-lg">
+          <p className="mt-2 text-muted-foreground">
             เลือกวัน เวลา และจำนวนคน ระบบจะหาโต๊ะที่เหมาะที่สุดให้คุณทันที
           </p>
-
-          {/* CTAs */}
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Button className="bg-[#6066FF] hover:bg-[#4d53d9]">ดูเมนูแนะนำ</Button>
-            <Button
-              variant="outline"
-              className="border-white/60 bg-white/10 text-white hover:bg-white/20"
-            >
-              สมัครสมาชิกฟรี
-            </Button>
-          </div>
         </motion.div>
 
-        {/* Search bar (Glass) */}
+        {/* ---------- Booking Bar (สวยงาม + ไอคอน + กระจกใส) ---------- */}
         <motion.form
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.55, delay: 0.1 }}
+          transition={{ duration: 0.55, delay: 0.08 }}
           action={(fd) => handleSubmit(fd)}
-          className="mt-8 rounded-2xl border border-white/20 bg-white/90 p-3 shadow-xl backdrop-blur sm:p-4"
+          className="mt-6"
         >
-          {/* hidden for Select */}
-          <input type="hidden" name="people" value={people} />
+          {/* กรอบไฮไลต์แบบกราเดียนต์บาง ๆ */}
+          <div className="rounded-2xl bg-gradient-to-r from-indigo-500/20 via-sky-500/20 to-purple-500/20 p-[1px] shadow-[0_10px_40px_-12px_rgba(0,0,0,0.25)]">
+            <div className="rounded-2xl border border-black/5 bg-white/90 p-3 backdrop-blur md:p-4">
+              {/* hidden สำหรับ Select */}
+              <input type="hidden" name="people" value={people} />
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
-            {/* Date */}
-            <div className="sm:col-span-2">
-              <label htmlFor="date" className="mb-1 block text-sm font-medium text-foreground/80">
-                วันที่
-              </label>
-              <Input
-                id="date"
-                type="date"
-                name="date"
-                required
-                defaultValue={todayStr}
-                className="bg-white"
-              />
-            </div>
+              {/* แถวอินพุต */}
+              <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-12">
+                {/* วันที่ */}
+                <div className="md:col-span-4">
+                  <label
+                    htmlFor="date"
+                    className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    วันที่
+                  </label>
+                  <div className="group relative">
+                    <CalendarDays className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="date"
+                      name="date"
+                      type="date"
+                      required
+                      defaultValue={todayStr}
+                      min={todayStr}
+                      className="h-11 pl-9 pr-3 rounded-xl bg-white shadow-sm ring-1 ring-inset ring-gray-200 focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    />
+                    {/* เส้นแบ่งแนวตั้งทางขวา (เดสก์ท็อป) */}
+                    <div className="pointer-events-none absolute right-[-12px] top-2 hidden h-7 w-px bg-gray-200 md:block" />
+                  </div>
+                </div>
 
-            {/* Time */}
-            <div>
-              <label htmlFor="time" className="mb-1 block text-sm font-medium text-foreground/80">
-                เวลา
-              </label>
-              <Input
-                id="time"
-                type="time"
-                name="time"
-                required
-                defaultValue={timeStr}
-                className="bg-white"
-              />
-            </div>
+                {/* เวลา */}
+                <div className="md:col-span-3">
+                  <label
+                    htmlFor="time"
+                    className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    เวลา
+                  </label>
+                  <div className="group relative">
+                    <Clock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="time"
+                      name="time"
+                      type="time"
+                      step={1800}
+                      required
+                      defaultValue={timeStr}
+                      className="h-11 pl-9 pr-3 rounded-xl bg-white shadow-sm ring-1 ring-inset ring-gray-200 focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    />
+                    <div className="pointer-events-none absolute right-[-12px] top-2 hidden h-7 w-px bg-gray-200 md:block" />
+                  </div>
+                </div>
 
-            {/* People */}
-            <div>
-              <label className="mb-1 block text-sm font-medium text-foreground/80">
-                จำนวนคน
-              </label>
-              <Select value={people} onValueChange={setPeople}>
-                <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="เลือก" />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n} คน
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                {/* จำนวนคน */}
+                <div className="md:col-span-3">
+                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    จำนวนคน
+                  </label>
+                  <div className="group relative">
+                    <Users className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Select value={people} onValueChange={setPeople}>
+                      <SelectTrigger className="h-11 pl-9 rounded-xl bg-white shadow-sm ring-1 ring-inset ring-gray-200 focus:ring-2 focus:ring-indigo-500">
+                        <SelectValue placeholder="เลือก" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n} คน
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
 
-            {/* Button */}
-            <div className="flex items-end">
-              <Button
-                type="submit"
-                className="h-10 w-full bg-[#6066FF] hover:bg-[#4d53d9]"
-              >
-                Find Slot
-              </Button>
+                {/* ปุ่มค้นหา */}
+                <div className="md:col-span-2">
+                  <Button
+                    type="submit"
+                    className="h-11 w-full rounded-xl bg-indigo-600 text-white shadow-sm transition hover:bg-indigo-500"
+                  >
+                    <Search className="mr-2 h-4 w-4" />
+                    Find Slot
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </motion.form>

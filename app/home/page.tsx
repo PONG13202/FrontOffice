@@ -1,4 +1,4 @@
-'use client';
+"use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import TopNav from "../components/TopNav";
@@ -14,7 +14,7 @@ type SlideItem = {
   slide_id: number;
   slide_name: string;
   slide_img: string;
-  slide_status?: 0 | 1;        // รองรับ event จาก socket
+  slide_status?: 0 | 1; // รองรับ event จาก socket
   createdAt?: string;
   updatedAt?: string;
 };
@@ -56,26 +56,26 @@ export default function Home() {
 
     const upsertIfActive = (slide: SlideItem) => {
       if (slide.slide_status === 1 || slide.slide_status === undefined) {
-        setSlides(prev => {
-          const idx = prev.findIndex(s => s.slide_id === slide.slide_id);
+        setSlides((prev) => {
+          const idx = prev.findIndex((s) => s.slide_id === slide.slide_id);
           if (idx >= 0) {
             const next = [...prev];
             next[idx] = slide;
             return next;
-            } else {
+          } else {
             return [...prev, slide];
           }
         });
       } else {
         // ถ้ากลายเป็น 0 ให้ลบทิ้ง
-        setSlides(prev => prev.filter(s => s.slide_id !== slide.slide_id));
+        setSlides((prev) => prev.filter((s) => s.slide_id !== slide.slide_id));
       }
     };
 
     const onCreated = (slide: SlideItem) => upsertIfActive(slide);
     const onUpdated = (slide: SlideItem) => upsertIfActive(slide);
     const onDeleted = ({ slide_id }: { slide_id: number }) => {
-      setSlides(prev => prev.filter(s => s.slide_id !== slide_id));
+      setSlides((prev) => prev.filter((s) => s.slide_id !== slide_id));
     };
 
     socket.on("slide:created", onCreated);
@@ -96,9 +96,13 @@ export default function Home() {
   const images = useMemo(
     () =>
       slides
-        .map(s => s.slide_img)
+        .map((s) => s.slide_img)
         .filter(Boolean)
-        .map(p => (p.startsWith("http") ? p : `${base}${p.startsWith("/") ? "" : "/"}${p}`)),
+        .map((p) =>
+          p.startsWith("http")
+            ? p
+            : `${base}${p.startsWith("/") ? "" : "/"}${p}`
+        ),
     [slides, base]
   );
 
@@ -111,7 +115,9 @@ export default function Home() {
           <div className="lg:col-span-9">
             <Recommended
               onFindSlot={({ date, time, people }) =>
-                router.push(`/results?date=${date}&time=${time}&people=${people}`)
+                router.push(
+                  `/results?date=${date}&time=${time}&people=${people}`
+                )
               }
               images={images}
             />
@@ -123,7 +129,9 @@ export default function Home() {
                 <h3 className="font-semibold">การเดินทาง</h3>
               </div>
               <div className="p-3">
-                <div className="h-[360px] w-full overflow-hidden rounded-lg">{/* map */}</div>
+                <div className="h-[360px] w-full overflow-hidden rounded-lg">
+                  {/* map */}
+                </div>
               </div>
             </div>
           </aside>
