@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { th } from "date-fns/locale";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -38,12 +39,14 @@ export default function Recommended({
   autoPlay = true,
   intervalMs = 4000,
   transitionMs = 450,
+  seatChoices,
 }: {
   images: string[];
   onFindSlot?: (p: FindSlotPayload) => void;
   autoPlay?: boolean;
   intervalMs?: number;
   transitionMs?: number;
+  seatChoices?: number[];
 }) {
   /** ---------- State ---------- */
   const [index, setIndex] = useState(0);
@@ -67,14 +70,52 @@ export default function Recommended({
   const todayObj = useMemo(() => startOfToday(), []);
   const [dateObj, setDateObj] = useState<Date>(todayObj);
   const [date, setDate] = useState<string>(toDateStr(todayObj));
+  const currentYear = new Date().getFullYear();
+
+  // ใช้ภาษาไทย + ปฏิทินเกรกอเรียน (ปี ค.ศ.)
+  const thFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat("th-TH-u-ca-gregory", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }),
+    []
+  );
 
   const nextHalfHour = useMemo(() => {
     const d = new Date();
     d.setMinutes(d.getMinutes() + (30 - (d.getMinutes() % 30 || 30)), 0, 0);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    return `${String(d.getHours()).padStart(2, "0")}:${String(
+      d.getMinutes()
+    ).padStart(2, "0")}`;
   }, []);
   const [time, setTime] = useState(nextHalfHour);
+
+  // จำนวนคน (state หลัก)
   const [people, setPeople] = useState(2);
+  const choices =
+    seatChoices && seatChoices.length ? seatChoices : [1, 2, 3, 4, 5, 6, 7, 8];
+
+  // โหมดพิมพ์เองสำหรับจำนวนคน
+  const [useManualPeople, setUseManualPeople] = useState(false);
+  const [manualPeople, setManualPeople] = useState(String(people));
+
+  useEffect(() => {
+    if (!useManualPeople) setManualPeople(String(people));
+  }, [useManualPeople, people]);
+
+  const handleManualChange = (val: string) => {
+    const digits = val.replace(/\D/g, "").slice(0, 2);
+    setManualPeople(digits);
+    if (digits !== "") {
+      const n = Math.max(1, Math.min(99, Number(digits)));
+      setPeople(n);
+    }
+  };
+  const finishManualIfEmpty = () => {
+    if (manualPeople === "") setManualPeople(String(people));
+  };
 
   const visibleImages = images?.filter(Boolean) ?? [];
   const count = visibleImages.length;
@@ -112,7 +153,8 @@ export default function Recommended({
     };
   }, []);
 
-  const paused = isHovering || !isWindowFocused || isHidden || count <= 1 || !autoPlay;
+  const paused =
+    isHovering || !isWindowFocused || isHidden || count <= 1 || !autoPlay;
 
   useEffect(() => {
     if (paused) return;
@@ -128,7 +170,6 @@ export default function Recommended({
     e.preventDefault();
   };
 
-  // ให้กดทั้งกรอบเวลาได้
   const timeInputRef = useRef<HTMLInputElement>(null);
   const openTimePicker = useCallback(() => {
     const el = timeInputRef.current as any;
@@ -173,46 +214,48 @@ export default function Recommended({
           )}
         </AnimatePresence>
 
-        {/* ปุ่มก่อนหน้า/ถัดไป */}
         {count > 1 && (
           <>
             <button
               aria-label="Previous"
               onClick={prev}
-              className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white backdrop-blur transition hover:bg-black/60 focus:outline-none"
+              className="cursor-pointer absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white backdrop-blur transition hover:bg-black/60 focus:outline-none"
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
             <button
               aria-label="Next"
               onClick={next}
-              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white backdrop-blur transition hover:bg-black/60 focus:outline-none"
+              className="cursor-pointer absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white backdrop-blur transition hover:bg-black/60 focus:outline-none"
             >
               <ChevronRight className="h-5 w-5" />
             </button>
           </>
         )}
 
-        {/* จุดบอกสถานะ + ปุ่มหยุด/เล่น */}
         {count > 1 && (
-          <div className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-2">
+          <div className=" absolute bottom-3 left-0 right-0 flex items-center justify-center gap-2">
             <div className="flex items-center gap-1 rounded-full bg-black/60 px-2 py-1">
               {visibleImages.map((_, i) => (
                 <button
                   key={i}
                   aria-label={`Go to ${i + 1}`}
-                  className={`grid place-items-center rounded-full p-1 transition ${
+                  className={`cursor-pointer grid place-items-center rounded-full p-1 transition ${
                     i === index ? "scale-110" : "opacity-70 hover:opacity-100"
                   }`}
                   onClick={() => setIndex(i)}
                 >
-                  <Dot className={`h-6 w-6 ${i === index ? "text-white" : "text-white/70"}`} />
+                  <Dot
+                    className={`h-6 w-6 ${
+                      i === index ? "text-white" : "text-white/70"
+                    }`}
+                  />
                 </button>
               ))}
               <button
                 aria-label={paused ? "Play" : "Pause"}
                 onClick={() => setIsHovering((p) => !p)}
-                className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-neutral-800 hover:bg-white"
+                className="cursor-pointer ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-neutral-800 hover:bg-white"
               >
                 {paused ? "เล่น" : "พัก"}
               </button>
@@ -230,9 +273,9 @@ export default function Recommended({
             onFindSlot?.({ date, time, people });
           }}
         >
-          {/* วันที่ — ทำกรอบให้เหมือนเวลา (ไม่มี border ซ้อน, ใช้ ring-1 เท่ากัน) */}
+          {/* วันที่ */}
           <div className="md:col-span-3">
-            <label className="mb-1 block text-sm font-medium">วันที่</label>
+            <div className="mb-1 block text-sm font-medium">วันที่</div>
             <div className="relative">
               <CalendarDays className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Popover>
@@ -241,17 +284,17 @@ export default function Recommended({
                     type="button"
                     variant="ghost"
                     className={cn(
-                      "h-11 w-full justify-start rounded-xl bg-white pl-9 text-left font-normal",
+                      "cursor-pointer h-11 w-full justify-start rounded-xl bg-white pl-9 text-left font-normal",
                       "border-0 ring-1 ring-inset ring-gray-200 hover:bg-white",
                       "focus-visible:ring-2 focus-visible:ring-primary"
                     )}
                   >
-                    {date}
+                    {thFormatter.format(dateObj ?? todayObj)}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
                   align="start"
-                  className="w-auto rounded-xl border bg-white p-0 shadow-xl"
+                  className="cursor-pointer w-auto rounded-xl border bg-white p-0 shadow-xl"
                 >
                   <Calendar
                     mode="single"
@@ -264,15 +307,20 @@ export default function Recommended({
                     }}
                     disabled={(d) => d < startOfToday()}
                     initialFocus
+                    locale={th}
+                    captionLayout="dropdown"
+                    fromYear={currentYear - 2}
+                    toYear={currentYear + 3}
+                    defaultMonth={dateObj}
                   />
                 </PopoverContent>
               </Popover>
             </div>
           </div>
 
-          {/* เวลา — กดได้ทั้งกรอบ */}
+          {/* เวลา */}
           <div className="md:col-span-3">
-            <label className="mb-1 block text-sm font-medium">เวลา</label>
+            <div className="mb-1 block text-sm font-medium">เวลา</div>
             <div
               role="button"
               tabIndex={0}
@@ -294,39 +342,86 @@ export default function Recommended({
                 step={1800}
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                className="h-full w-full border-0 bg-transparent p-0 focus-visible:ring-0"
+                className="cursor-pointer h-full w-full border-0 bg-transparent p-0 focus-visible:ring-0"
               />
             </div>
           </div>
 
-          {/* จำนวนคน — ให้กรอบเหมือนเวลา */}
+          {/* จำนวนคน */}
           <div className="md:col-span-3">
-            <label className="mb-1 block text-sm font-medium">จำนวนคน</label>
-            <div className="relative">
-              <Users className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Select value={String(people)} onValueChange={(v) => setPeople(parseInt(v))}>
-                <SelectTrigger
-                  className="h-11 rounded-xl bg-white pl-9 border-0 ring-1 ring-inset ring-gray-200
+            <div className="mb-1 block text-sm font-medium">จำนวนคน</div>
+
+            {useManualPeople ? (
+              // โหมดพิมพ์เอง + ปุ่มตัวเลือกด้านในช่อง (ขวา)
+              <div className="relative">
+                <Users className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={2}
+                  placeholder="เช่น 12"
+                  value={manualPeople}
+                  onChange={(e) => handleManualChange(e.target.value)}
+                  onBlur={finishManualIfEmpty}
+                  className="h-11 rounded-xl bg-white pl-9 pr-20 ring-1 ring-inset ring-gray-200
                              focus-visible:ring-2 focus-visible:ring-primary"
+                  title="พิมพ์ได้เฉพาะตัวเลข ไม่เกิน 2 หลัก (1–99)"
+                  aria-label="จำนวนคน (พิมพ์เอง)"
+                />
+                <button
+                  type="button"
+                  onClick={() => setUseManualPeople(false)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10"
                 >
-                  <SelectValue placeholder="เลือกจำนวนคน" />
-                </SelectTrigger>
-                <SelectContent className="bg-white border border-gray-200 shadow-xl">
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n} คน
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                  ตัวเลือก
+                </button>
+              </div>
+            ) : (
+              // โหมดเลือกจากรายการ + ปุ่มเพิ่มเติมด้านในช่อง (ขวา)
+              <div className="relative">
+                <Users className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Select
+                  value={String(people)}
+                  onValueChange={(v) => {
+                    setPeople(parseInt(v));
+                  }}
+                >
+                  <SelectTrigger
+                    className="cursor-pointer h-11 rounded-xl bg-white pl-9 pr-20 border-0 ring-1 ring-inset ring-gray-200
+                               focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    <SelectValue placeholder="เลือกจำนวนคน" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-white border border-gray-200 shadow-xl">
+                    {choices.map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n} คน
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* ปุ่ม 'เพิ่มเติม' ข้างๆ จำนวน */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseManualPeople(true);
+                    setManualPeople(String(people));
+                  }}
+                  className="cursor-pointer absolute right-6 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10"
+                >
+                  เพิ่มเติม
+                </button>
+              </div>
+            )}
           </div>
 
           {/* ปุ่มค้นหา */}
-          <div className="md:col-span-3 md:col-start-10 flex items-end">
+          <div className="md:col-span-2 md:col-start-10 flex items-end">
             <Button
               type="submit"
-              className="h-11 w-full rounded-xl bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+              className="cursor-pointer h-11 w-full rounded-xl bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
             >
               <Search className="mr-2 h-4 w-4" />
               Find Slot

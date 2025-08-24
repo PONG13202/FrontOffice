@@ -9,11 +9,32 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoogleLogin, CredentialResponse } from "@react-oauth/google";
-import SignInCompletion from "../components/SignInCompletion"; // ✅ ใช้คอมโพเนนต์ที่ตรงกัน
+import SignInCompletion from "../components/SignInCompletion";
 import { config } from "../config";
 
 export default function LoginPage() {
   const router = useRouter();
+
+  // ✅ guard: กันผู้ใช้ที่ล็อกอินแล้วเข้าหน้านี้
+  const [checking, setChecking] = useState(true);
+  useEffect(() => {
+    let ignore = false;
+    const run = async () => {
+      const token = localStorage.getItem("token");
+      if (!token) { setChecking(false); return; }
+      try {
+        await axios.get(`${config.apiUrl}/user_info`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!ignore) router.replace("/"); // ล็อกอินแล้ว → เด้งออก
+      } catch {
+        localStorage.removeItem("token"); // token เสีย/หมดอายุ
+        if (!ignore) setChecking(false);
+      }
+    };
+    run();
+    return () => { ignore = true; };
+  }, [router]);
 
   // --- state สำหรับหน้า login ปกติ ---
   const [form, setForm] = useState({ user_name: "", user_pass: "" });
@@ -126,7 +147,7 @@ export default function LoginPage() {
           showConfirmButton: false,
           timer: 1200,
         });
-        router.push("/home");
+        router.push("/"); // ไปหน้าแรก
       }
     } catch (err: any) {
       Swal.fire({
@@ -174,7 +195,7 @@ export default function LoginPage() {
             showConfirmButton: false,
             timer: 1200,
           });
-          router.push("/home");
+          router.push("/"); // ไปหน้าแรก
         }
       }
     } catch (err: any) {
@@ -195,7 +216,6 @@ export default function LoginPage() {
     e.preventDefault();
     if (loadingProfile) return;
 
-    // validation เบื้องต้น
     const emailOk = /\S+@\S+\.\S+/.test(profileForm.user_email);
     if (!emailOk) {
       Swal.fire({ icon: "error", title: "อีเมลไม่ถูกต้อง" });
@@ -257,7 +277,7 @@ export default function LoginPage() {
         timer: 1200,
       });
       setOpenModal(false);
-      router.push("/home");
+      router.push("/"); // ไปหน้าแรก
     } catch (err: any) {
       Swal.fire({
         icon: "error",
@@ -274,9 +294,24 @@ export default function LoginPage() {
     }
   };
 
+  if (checking) {
+    return (
+      <div className="min-h-screen grid place-items-center text-slate-600">
+        กำลังตรวจสอบสถานะการเข้าสู่ระบบ…
+      </div>
+    );
+  }
+
   // --- UI ---
   return (
-    <div className="min-h-screen flex items-center justify-center bg-blue-50 font-prompt">
+    <div className="min-h-screen relative flex items-center justify-center bg-blue-50 font-prompt">
+      {/* ปุ่มกลับหน้าแรก */}
+      <div className="fixed top-4 left-4">
+        <Button variant="outline" asChild>
+          <Link href="/">← กลับหน้าแรก</Link>
+        </Button>
+      </div>
+
       <Card className="w-full max-w-md shadow-lg border border-blue-200">
         <CardHeader>
           <CardTitle className="text-center text-3xl font-semibold text-blue-800">
@@ -348,26 +383,25 @@ export default function LoginPage() {
         </CardContent>
       </Card>
 
-<SignInCompletion
-  open={openModal}
-  onOpenChange={setOpenModal}
-  missingFields={missingFields}
-  submitting={
-    loadingProfile ||
-    !!passwordError ||
-    !!confirmPasswordError ||
-    !!usernameStatus ||
-    !!emailStatus
-  }
-  usernameStatus={usernameStatus}
-  emailStatus={emailStatus}
-  passwordError={passwordError}
-  confirmPasswordError={confirmPasswordError}
-  profileForm={profileForm}
-  onProfileChange={handleProfileChange}
-  onProfileSubmit={handleProfileSubmit}
-/>
-
+      <SignInCompletion
+        open={openModal}
+        onOpenChange={setOpenModal}
+        missingFields={missingFields}
+        submitting={
+          loadingProfile ||
+          !!passwordError ||
+          !!confirmPasswordError ||
+          !!usernameStatus ||
+          !!emailStatus
+        }
+        usernameStatus={usernameStatus}
+        emailStatus={emailStatus}
+        passwordError={passwordError}
+        confirmPasswordError={confirmPasswordError}
+        profileForm={profileForm}
+        onProfileChange={handleProfileChange}
+        onProfileSubmit={handleProfileSubmit}
+      />
     </div>
   );
 }

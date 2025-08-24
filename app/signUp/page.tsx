@@ -7,28 +7,46 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { config } from "../config";
-
 import Swal from "sweetalert2";
 
 export default function SignUp() {
+  const router = useRouter();
+
+  // ✅ guard: กันผู้ใช้ที่ล็อกอินแล้วเข้าหน้านี้
+  const [checking, setChecking] = useState(true);
+  useEffect(() => {
+    let ignore = false;
+    const run = async () => {
+      const token = localStorage.getItem("token");
+      if (!token) { setChecking(false); return; }
+      try {
+        await axios.get(`${config.apiUrl}/user_info`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!ignore) router.replace("/"); // ล็อกอินแล้ว → เด้งออก
+      } catch {
+        localStorage.removeItem("token");
+        if (!ignore) setChecking(false);
+      }
+    };
+    run();
+    return () => { ignore = true; };
+  }, [router]);
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState(""); // เพิ่ม state สำหรับยืนยันรหัสผ่าน
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [fname, setFname] = useState("");
   const [lname, setLname] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [selectedImage, setSelectedImage] = useState<File | null>(null); // เพิ่ม state สำหรับรูปภาพ
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [usernameStatus, setUsernameStatus] = useState("");
   const [emailStatus, setEmailStatus] = useState("");
   const [formError, setFormError] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const [confirmPasswordError, setConfirmPasswordError] = useState(""); // เพิ่ม state สำหรับ error ยืนยันรหัสผ่าน
-
-  const router = useRouter();
-
-
+  const [confirmPasswordError, setConfirmPasswordError] = useState("");
 
   // Check username availability
   useEffect(() => {
@@ -36,13 +54,9 @@ export default function SignUp() {
       if (username.trim()) {
         try {
           const res = await axios.get(
-            `${config.apiUrl}/check_user?user_name=${encodeURIComponent(
-              username
-            )}`
+            `${config.apiUrl}/check_user?user_name=${encodeURIComponent(username)}`
           );
-          setUsernameStatus(
-            res.data.available ? "" : "ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว"
-          );
+          setUsernameStatus(res.data.available ? "" : "ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว");
         } catch {
           setUsernameStatus("ไม่สามารถตรวจสอบชื่อผู้ใช้ได้");
         }
@@ -59,9 +73,7 @@ export default function SignUp() {
       if (email.trim()) {
         try {
           const res = await axios.get(
-            `${config.apiUrl}/check_mail?user_email=${encodeURIComponent(
-              email
-            )}`
+            `${config.apiUrl}/check_mail?user_email=${encodeURIComponent(email)}`
           );
           setEmailStatus(res.data.available ? "" : "อีเมลนี้ถูกใช้ไปแล้ว");
         } catch {
@@ -83,7 +95,6 @@ export default function SignUp() {
     } else {
       setPasswordError("");
     }
-    // ตรวจสอบ confirmPassword ด้วยเมื่อ password เปลี่ยน
     if (confirmPassword && value !== confirmPassword) {
       setConfirmPasswordError("รหัสผ่านไม่ตรงกัน");
     } else {
@@ -91,7 +102,6 @@ export default function SignUp() {
     }
   };
 
-  // Handle confirm password change and validation
   const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setConfirmPassword(value);
@@ -112,13 +122,12 @@ export default function SignUp() {
   };
 
   const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent page reload
+    e.preventDefault();
 
-    setFormError(""); // Clear previous form errors
-    setPasswordError(""); // Clear password specific errors
-    setConfirmPasswordError(""); // Clear confirm password specific errors
+    setFormError("");
+    setPasswordError("");
+    setConfirmPasswordError("");
 
-    // --- Validation Checks ---
     if (!username || !password || !confirmPassword || !fname || !lname || !email) {
       setFormError("กรุณากรอกข้อมูลให้ครบทุกช่อง");
       return;
@@ -132,13 +141,13 @@ export default function SignUp() {
 
     if (password.length < 6) {
       setPasswordError("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
-      setFormError("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร"); // แสดงที่ formError ด้วย
+      setFormError("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
       return;
     }
 
     if (password !== confirmPassword) {
       setConfirmPasswordError("รหัสผ่านไม่ตรงกัน");
-      setFormError("รหัสผ่านไม่ตรงกัน"); // แสดงที่ formError ด้วย
+      setFormError("รหัสผ่านไม่ตรงกัน");
       return;
     }
 
@@ -146,11 +155,9 @@ export default function SignUp() {
       setFormError("กรุณาแก้ไขข้อมูลที่ไม่ถูกต้องก่อนลงทะเบียน");
       return;
     }
-    // --- End Validation Checks ---
 
     setIsLoading(true);
     try {
-      // ใช้ FormData เพื่อส่งข้อมูลฟอร์มและไฟล์รูปภาพ
       const formData = new FormData();
       formData.append("user_name", username);
       formData.append("user_pass", password);
@@ -158,15 +165,10 @@ export default function SignUp() {
       formData.append("user_lname", lname);
       formData.append("user_email", email);
       formData.append("user_phone", phone);
-      if (selectedImage) {
-        formData.append("user_img", selectedImage); // 'user_profile_picture' คือชื่อ field ที่ API คาดหวัง
-      }
+      if (selectedImage) formData.append("user_img", selectedImage);
 
-      // ส่ง Request ด้วย axios โดยใช้ FormData
       const response = await axios.post(`${config.apiUrl}/signup`, formData, {
-        headers: {
-          "Content-Type": "multipart/form-data", // สำคัญมากเมื่อส่งไฟล์
-        },
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
       if (response.status === 200 || response.status === 201) {
@@ -182,26 +184,30 @@ export default function SignUp() {
     } catch (err: any) {
       const message = err.response?.data?.message || "ไม่สามารถลงทะเบียนได้";
       setFormError(message);
-
-      Swal.fire({
-        icon: "error",
-        title: "เกิดข้อผิดพลาด",
-        text: message + err,
-      });
+      Swal.fire({ icon: "error", title: "เกิดข้อผิดพลาด", text: message + err });
     } finally {
       setIsLoading(false);
     }
   };
 
+  if (checking) {
+    return (
+      <div className="min-h-screen grid place-items-center text-slate-600">
+        กำลังตรวจสอบสถานะการเข้าสู่ระบบ…
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-100 font-prompt">
+      <div className="fixed top-4 left-4">
+        <Button variant="outline" asChild>
+          <Link href="/">← กลับหน้าแรก</Link>
+        </Button>
+      </div>
       <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
-        <h1 className="text-2xl font-bold text-center text-blue-600">
-          ลงทะเบียน
-        </h1>
-        <p className="text-center text-gray-600">
-          กรุณากรอกข้อมูลเพื่อสร้างบัญชีใหม่
-        </p>
+        <h1 className="text-2xl font-bold text-center text-blue-600">ลงทะเบียน</h1>
+        <p className="text-center text-gray-600">กรุณากรอกข้อมูลเพื่อสร้างบัญชีใหม่</p>
 
         <form className="space-y-4" onSubmit={handleRegister}>
           {/* Username */}
@@ -218,9 +224,7 @@ export default function SignUp() {
               onChange={(e) => setUsername(e.target.value)}
               required
             />
-            {usernameStatus && (
-              <p className="text-sm text-red-500 mt-1">{usernameStatus}</p>
-            )}
+            {usernameStatus && <p className="text-sm text-red-500 mt-1">{usernameStatus}</p>}
           </div>
 
           {/* Password */}
@@ -237,9 +241,7 @@ export default function SignUp() {
               onChange={handlePasswordChange}
               required
             />
-            {passwordError && (
-              <p className="text-sm text-red-500 mt-1">{passwordError}</p>
-            )}
+            {passwordError && <p className="text-sm text-red-500 mt-1">{passwordError}</p>}
           </div>
 
           {/* Confirm Password */}
@@ -256,9 +258,7 @@ export default function SignUp() {
               onChange={handleConfirmPasswordChange}
               required
             />
-            {confirmPasswordError && (
-              <p className="text-sm text-red-500 mt-1">{confirmPasswordError}</p>
-            )}
+            {confirmPasswordError && <p className="text-sm text-red-500 mt-1">{confirmPasswordError}</p>}
           </div>
 
           {/* First Name */}
@@ -307,9 +307,7 @@ export default function SignUp() {
               onChange={(e) => setEmail(e.target.value)}
               required
             />
-            {emailStatus && (
-              <p className="text-sm text-red-500 mt-1">{emailStatus}</p>
-            )}
+            {emailStatus && <p className="text-sm text-red-500 mt-1">{emailStatus}</p>}
           </div>
 
           {/* Phone */}
@@ -338,13 +336,11 @@ export default function SignUp() {
               id="profilePicture"
               className="border-blue-300 focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
               type="file"
-              accept="image/*" // อนุญาตเฉพาะไฟล์รูปภาพ
+              accept="image/*"
               onChange={handleImageChange}
             />
             {selectedImage && (
-              <p className="text-sm text-gray-500 mt-1">
-                เลือกไฟล์: {selectedImage.name}
-              </p>
+              <p className="text-sm text-gray-500 mt-1">เลือกไฟล์: {selectedImage.name}</p>
             )}
           </div>
 
@@ -359,14 +355,14 @@ export default function SignUp() {
               isLoading ||
               !username ||
               !password ||
-              !confirmPassword || // เพิ่มการตรวจสอบ confirmPassword
+              !confirmPassword ||
               !fname ||
               !lname ||
               !email ||
               !!usernameStatus ||
               !!emailStatus ||
-              !!passwordError || // เพิ่มการตรวจสอบ error รหัสผ่าน
-              !!confirmPasswordError // เพิ่มการตรวจสอบ error ยืนยันรหัสผ่าน
+              !!passwordError ||
+              !!confirmPasswordError
             }
           >
             {isLoading ? "กำลังลงทะเบียน..." : "ลงทะเบียน"}
