@@ -14,21 +14,27 @@ import { config } from "@/app/config";
 
 const LS_CART_KEY = "cart:v1";
 const LS_BOOKING_KEY = "booking:v1";
+const LS_USER_KEY = "user:v1"; // รับข้อมูลผู้ใช้จาก TopNav
 
 type PaymentRow = {
   id: number;
   amount: number;
-  status: "PENDING" | "SUBMITTED" | "PAID";
+  status: "PENDING" | "SUBMITTED" | "PAID" | "EXPIRED";
   qrDataUrl?: string | null;
   expiresAt?: string | null;
   slipImage?: string | null;
 };
 
-type CreateResResp = { reservationId: number; depositAmount: number; orderTotal: number };
+type CreateResResp = {
+  reservationId: number;
+  depositAmount: number;
+  orderTotal: number;
+};
 
 function authHeader() {
   if (typeof window === "undefined") return {};
-  const token = localStorage.getItem("token") || localStorage.getItem("authToken");
+  const token =
+    localStorage.getItem("token") || localStorage.getItem("authToken");
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -52,21 +58,29 @@ type BookingDraft = {
   date?: string;
   time?: string;
   people?: number;
-  duration?: number;
   tableId?: string | number;
   tableName?: string;
   reservationId?: number;
   savedAt?: number;
 };
 
+type UserInfo = {
+  user_id: number;
+  user_name?: string | null;
+  user_fname?: string | null;
+  user_lname?: string | null;
+  user_email?: string | null;
+  user_phone?: string | null;
+  user_img?: string | null;
+};
+
 export default function ResultsPage() {
   const router = useRouter();
   const q = useSearchParams();
 
-  // --- รับค่าจาก query (อย่าใช้ new Date() ตอน SSR) ---
+  // --- รับค่าจาก query ---
   const qDate = q.get("date") || "";
   const qTime = q.get("time") || "";
-  const qDuration = parseInt(q.get("duration") || "90", 10);
   const qPeople = parseInt(q.get("people") || "0", 10);
   const tableId = q.get("tableId");
   const qTableName = q.get("tableName") || "";
@@ -75,15 +89,97 @@ export default function ResultsPage() {
   // --- ค่าแก้ไขได้ในหน้า Result ---
   const [date, setDate] = useState<string>(qDate);
   const [time, setTime] = useState<string>(qTime);
-  const [duration, setDuration] = useState<number>(Number.isFinite(qDuration) ? qDuration : 90);
-  const [people, setPeople] = useState<number>(Number.isFinite(qPeople) ? qPeople : 0);
+  const [people, setPeople] = useState<number>(
+    Number.isFinite(qPeople) ? qPeople : 0
+  );
+
+  // รับข้อมูลผู้ใช้จาก TopNav (ผ่าน localStorage / event)
+  const [user, setUser] = useState<UserInfo | null>(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+
+  useEffect(() => {
+    let ignore = false;
+
+    const readUserFromLS = () => {
+      try {
+        const raw = localStorage.getItem(LS_USER_KEY);
+        return raw ? (JSON.parse(raw) as UserInfo) : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const syncFromTopNav = () => {
+      if (ignore) return;
+      const u = readUserFromLS();
+      setUser(u);
+      setLoadingUser(false);
+    };
+
+    // 1) ลองอ่านจาก LS ก่อน
+    const first = readUserFromLS();
+    if (first) {
+      setUser(first);
+      setLoadingUser(false);
+    } else {
+      // 2) ดึงจาก API ตรง (มี token)
+      (async () => {
+        try {
+          const token =
+            localStorage.getItem("token") || localStorage.getItem("authToken");
+          if (!token) {
+            setUser(null);
+          } else {
+            const { data } = await axios.get(`${config.apiUrl}/user_info`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!ignore) setUser(data?.user ?? null);
+          }
+        } catch {
+          if (!ignore) setUser(null);
+        } finally {
+          if (!ignore) setLoadingUser(false);
+        }
+      })();
+    }
+
+    // 3) ฟัง event จาก TopNav
+    const onUserUpdated = (e: Event) => {
+      try {
+        const anyEv = e as CustomEvent<UserInfo | null>;
+        if (anyEv?.detail !== undefined) {
+          if (!ignore) setUser(anyEv.detail);
+        } else {
+          syncFromTopNav();
+        }
+      } catch {
+        syncFromTopNav();
+      }
+    };
+
+    // 4) เผื่อเปลี่ยนข้ามแท็บ
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === LS_USER_KEY) syncFromTopNav();
+    };
+
+    window.addEventListener("user:updated", onUserUpdated as any);
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      ignore = true;
+      window.removeEventListener("user:updated", onUserUpdated as any);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   // ตั้ง default date หลัง mount ถ้าไม่ถูกส่งมาจาก query
   useEffect(() => {
     if (!date) {
       try {
         const today = new Date();
-        const iso = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()))
+        const iso = new Date(
+          Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+        )
           .toISOString()
           .slice(0, 10);
         setDate(iso);
@@ -91,10 +187,9 @@ export default function ResultsPage() {
     }
   }, [date]);
 
-  // ----------------- หาชื่อโต๊ะ -----------------
+  // --------- ชื่อโต๊ะ ---------
   const [tableName, setTableName] = useState<string>(qTableName || "");
 
-  // อัปเดต booking ใน LS ให้มี tableName ด้วย (ถ้าได้ชื่อใหม่มา)
   const persistTableNameToBooking = (name: string) => {
     if (!tableId || !name) return;
     try {
@@ -112,14 +207,12 @@ export default function ResultsPage() {
   };
 
   useEffect(() => {
-    // ลำดับความสำคัญ: query → booking LS → ดึงจาก API
+    // ลำดับ: query → booking LS → API
     if (qTableName) {
       setTableName(qTableName);
       persistTableNameToBooking(qTableName);
       return;
     }
-
-    // ลองอ่านจาก booking ใน LS
     try {
       const raw = localStorage.getItem(LS_BOOKING_KEY);
       if (raw) {
@@ -131,23 +224,24 @@ export default function ResultsPage() {
       }
     } catch {}
 
-    // หากยังไม่มี และมี tableId → ลองยิง API หา
     const fetchName = async () => {
       if (!tableId) return;
       try {
-        // 1) แบบระบุตัวเดียว
         const one = await axios
-          .get(`${config.apiUrl}/tables/${tableId}`, { headers: { "Cache-Control": "no-store" } })
+          .get(`${config.apiUrl}/tables/${tableId}`, {
+            headers: { "Cache-Control": "no-store" },
+          })
           .then((r) => r.data)
           .catch(() => null);
 
         let name: string | undefined =
           one?.name || one?.table?.name || one?.data?.name || undefined;
 
-        // 2) ถ้ายังไม่เจอ ลองโหลดทั้งหมดแล้วค้นหา
         if (!name) {
           const all = await axios
-            .get(`${config.apiUrl}/tables`, { headers: { "Cache-Control": "no-store" } })
+            .get(`${config.apiUrl}/tables`, {
+              headers: { "Cache-Control": "no-store" },
+            })
             .then((r) => r.data)
             .catch(() => null);
           if (Array.isArray(all)) {
@@ -162,9 +256,7 @@ export default function ResultsPage() {
           setTableName(name);
           persistTableNameToBooking(name);
         }
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     };
 
     fetchName();
@@ -179,8 +271,9 @@ export default function ResultsPage() {
   const [sendingOtp, setSendingOtp] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [status, setStatus] =
-    useState<"INIT" | "CREATED" | "OTP_SENT" | "CONFIRMED" | "AWAITING_PAYMENT">("INIT");
+  const [status, setStatus] = useState<
+    "INIT" | "CREATED" | "OTP_SENT" | "CONFIRMED" | "AWAITING_PAYMENT"
+  >("INIT");
 
   const [payment, setPayment] = useState<PaymentRow | null>(null);
   const [expiresIn, setExpiresIn] = useState<number>(0);
@@ -188,9 +281,10 @@ export default function ResultsPage() {
   const [uploadingSlip, setUploadingSlip] = useState(false);
   const [polling, setPolling] = useState<boolean>(false);
 
-  // ---------- guard: ต้องล็อกอิน + มี tableId ----------
+  // ---------- guard ----------
   useEffect(() => {
-    const token = localStorage.getItem("token") || localStorage.getItem("authToken");
+    const token =
+      localStorage.getItem("token") || localStorage.getItem("authToken");
     if (!token) {
       Swal.fire({
         icon: "info",
@@ -201,7 +295,9 @@ export default function ResultsPage() {
       }).then((r) => {
         if (r.isConfirmed) {
           const redirect =
-            typeof window !== "undefined" ? window.location.pathname + "?" + q.toString() : "/results";
+            typeof window !== "undefined"
+              ? window.location.pathname + "?" + q.toString()
+              : "/results";
           router.push(`/signIn?redirect=${encodeURIComponent(redirect)}`);
         }
       });
@@ -215,7 +311,7 @@ export default function ResultsPage() {
     }
   }, [q, router, tableId]);
 
-  // ---------- โหลดตะกร้าอาหาร (หลัง mount เท่านั้น) ----------
+  // ---------- โหลดตะกร้า ----------
   const [items, setItems] = useState<CartLine[]>([]);
   const readCart = () => {
     try {
@@ -233,15 +329,9 @@ export default function ResultsPage() {
       return [];
     }
   };
-
-  useEffect(() => {
-    setItems(readCart());
-  }, []);
-
-  // sync เมื่อมีการแก้ไขตะกร้าจากแท็บอื่น/หน้าอื่น
+  useEffect(() => setItems(readCart()), []);
   useEffect(() => {
     const sync = () => setItems(readCart());
-
     const onStorage = (e: StorageEvent) => {
       if (e.key === LS_CART_KEY) sync();
     };
@@ -255,7 +345,6 @@ export default function ResultsPage() {
     window.addEventListener("cart:changed", onCustom as any);
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisible);
-
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("cart:changed", onCustom as any);
@@ -263,22 +352,22 @@ export default function ResultsPage() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
-
-  // เปิด section รายการอาหารอัตโนมัติ (ถ้า ?openCart=1)
   useEffect(() => {
-    if (openCart && itemsRef.current) {
+    if (openCart && itemsRef.current)
       itemsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
   }, [openCart]);
 
   // ---------- สรุปยอด ----------
   const estimate = useMemo(() => {
-    const itemsTotal = items.reduce((a, c) => a + Number(c.price) * Number(c.qty), 0);
+    const itemsTotal = items.reduce(
+      (a, c) => a + Number(c.price) * Number(c.qty),
+      0
+    );
     const deposit = itemsTotal > 0 ? 0 : 100; // มีอาหาร → ไม่เก็บมัดจำ
     return { itemsTotal, deposit, grand: itemsTotal > 0 ? itemsTotal : deposit };
   }, [items]);
 
-  // ---------- บันทึกการแก้ไขเวลา/จำนวนคน/ระยะเวลา ลง draft ----------
+  // ---------- บันทึกการแก้ไข ----------
   const saveDraft = () => {
     try {
       const prevRaw = localStorage.getItem(LS_BOOKING_KEY);
@@ -288,16 +377,20 @@ export default function ResultsPage() {
         date,
         time,
         people,
-        duration,
         tableId,
-        tableName: tableName || prev?.tableName, // ถ้าเพิ่งหามาได้ก็เขียนทับ
+        tableName: tableName || prev?.tableName,
         savedAt: Date.now(),
         reservationId,
       };
       localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(draft));
       window.dispatchEvent(new Event("booking:changed"));
-      Swal.fire({ icon: "success", title: "บันทึกเวลา/จำนวนแล้ว", timer: 1000, showConfirmButton: false });
-    } catch (e) {
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกเวลา/จำนวนแล้ว",
+        timer: 1000,
+        showConfirmButton: false,
+      });
+    } catch {
       Swal.fire({ icon: "error", title: "บันทึกไม่สำเร็จ" });
     }
   };
@@ -311,18 +404,20 @@ export default function ResultsPage() {
         tableId: Number(tableId),
         date,
         time,
-        durationMin: duration,
         people,
       };
       if (items.length > 0) body.items = items;
 
-      const { data } = await axios.post<CreateResResp>(`${config.apiUrl}/reservations`, body, {
-        headers: { ...authHeader(), "Content-Type": "application/json" },
-      });
+      const { data } = await axios.post<CreateResResp>(
+        `${config.apiUrl}/reservations`,
+        body,
+        {
+          headers: { ...authHeader(), "Content-Type": "application/json" },
+        }
+      );
       setReservationId(data.reservationId);
       setStatus("CREATED");
 
-      // เก็บ booking ไว้
       try {
         const prevRaw = localStorage.getItem(LS_BOOKING_KEY);
         const prev: BookingDraft = prevRaw ? JSON.parse(prevRaw) : {};
@@ -333,7 +428,6 @@ export default function ResultsPage() {
             date,
             time,
             people,
-            duration,
             tableId,
             tableName: tableName || prev?.tableName || "",
             reservationId: data.reservationId,
@@ -344,7 +438,12 @@ export default function ResultsPage() {
         window.dispatchEvent(new Event("cart:changed"));
       } catch {}
 
-      Swal.fire({ icon: "success", title: "สร้างใบจองสำเร็จ", timer: 1200, showConfirmButton: false });
+      Swal.fire({
+        icon: "success",
+        title: "สร้างใบจองสำเร็จ",
+        timer: 1200,
+        showConfirmButton: false,
+      });
     } catch (e: any) {
       showAxiosError(e, "สร้างใบจองไม่สำเร็จ");
     } finally {
@@ -352,7 +451,7 @@ export default function ResultsPage() {
     }
   };
 
-  // ---------- ขอ OTP ----------
+  // ---------- OTP / Payment ----------
   const requestOtp = async () => {
     if (!reservationId) return;
     setSendingOtp(true);
@@ -378,7 +477,6 @@ export default function ResultsPage() {
     }
   };
 
-  // ---------- ยืนยัน OTP ----------
   const verifyOtp = async () => {
     if (!reservationId || !otp) return;
     setVerifying(true);
@@ -390,7 +488,12 @@ export default function ResultsPage() {
       );
       if (data?.status === "CONFIRMED") {
         setStatus("CONFIRMED");
-        Swal.fire({ icon: "success", title: "ยืนยันการจองแล้ว", timer: 1500, showConfirmButton: false });
+        Swal.fire({
+          icon: "success",
+          title: "ยืนยันการจองแล้ว",
+          timer: 1500,
+          showConfirmButton: false,
+        });
         return;
       }
       if (data?.status === "AWAITING_PAYMENT") {
@@ -411,34 +514,47 @@ export default function ResultsPage() {
     }
   };
 
-  // ---------- นับถอยหลังหมดอายุ QR ----------
+  // นับถอยหลัง QR
   useEffect(() => {
     if (!payment?.expiresAt) {
       setExpiresIn(0);
       return;
     }
     const end = new Date(payment.expiresAt).getTime();
-    const tick = () => setExpiresIn(Math.max(0, Math.floor((end - Date.now()) / 1000)));
+    const tick = () =>
+      setExpiresIn(Math.max(0, Math.floor((end - Date.now()) / 1000)));
     tick();
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, [payment?.expiresAt]);
 
-  // ---------- โพลสถานะการชำระ ----------
+  // โพลเช็กสถานะการจ่าย
   useEffect(() => {
     if (status !== "AWAITING_PAYMENT" || !payment?.id) return;
     setPolling(true);
     const t = setInterval(async () => {
       try {
-        const { data } = await axios.get<PaymentRow>(`${config.apiUrl}/payment/${payment.id}`, {
-          headers: { ...authHeader(), "Cache-Control": "no-store" },
-        });
+        const { data } = await axios.get<PaymentRow>(
+          `${config.apiUrl}/payment/${payment.id}`,
+          {
+            headers: { ...authHeader(), "Cache-Control": "no-store" },
+          }
+        );
+        // อัปเดตสถานะล่าสุดไว้โชว์ (เช่น SUBMITTED/EXPIRED)
+        setPayment((prev) => ({ ...(prev as any), ...data }));
+
         if (data.status === "PAID") {
-          setPayment(data);
           setStatus("CONFIRMED");
-          Swal.fire({ icon: "success", title: "ชำระเงินสำเร็จ", timer: 1500, showConfirmButton: false });
+          Swal.fire({
+            icon: "success",
+            title: "ชำระเงินสำเร็จ",
+            timer: 1500,
+            showConfirmButton: false,
+          });
         }
-      } catch {}
+      } catch {
+        /* no-op */
+      }
     }, 4000);
     return () => {
       clearInterval(t);
@@ -446,15 +562,27 @@ export default function ResultsPage() {
     };
   }, [status, payment?.id]);
 
-  // ---------- อัปโหลดสลิป ----------
+  // อัปโหลดสลิป (ค้างไว้จนหมดเวลา)
   const uploadSlip = async () => {
     if (!payment?.id || !slip) return;
     setUploadingSlip(true);
     try {
       const fd = new FormData();
       fd.append("slip", slip);
-      await axios.post(`${config.apiUrl}/payment/${payment.id}/slip`, fd, { headers: { ...authHeader() } });
-      Swal.fire({ icon: "success", title: "ส่งสลิปแล้ว", text: "รอแอดมินตรวจสอบ", timer: 1500, showConfirmButton: false });
+      const { data } = await axios.post(
+        `${config.apiUrl}/payment/${payment.id}/slip`,
+        fd,
+        { headers: { ...authHeader() } }
+      );
+      // ✅ อัปเดตสถานะ + รูปสลิปที่เพิ่งอัป
+      setPayment((prev) => ({ ...(prev as any), ...data.payment }));
+      Swal.fire({
+        icon: "success",
+        title: "ส่งสลิปแล้ว",
+        text: "รอแอดมินตรวจสอบ",
+        timer: 1500,
+        showConfirmButton: false,
+      });
     } catch (e: any) {
       showAxiosError(e, "อัปโหลดสลิปไม่สำเร็จ");
     } finally {
@@ -462,7 +590,7 @@ export default function ResultsPage() {
     }
   };
 
-  // ---------- เคลียร์ตะกร้า/บุ๊กกิ้งเมื่อ CONFIRMED ----------
+  // ล้างตะกร้าเมื่อสำเร็จ
   useEffect(() => {
     if (status === "CONFIRMED") {
       try {
@@ -474,21 +602,70 @@ export default function ResultsPage() {
     }
   }, [status]);
 
+  const fullName = useMemo(() => {
+    if (!user) return "";
+    const name = [user.user_fname, user.user_lname]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    return name || (user.user_name ?? "");
+  }, [user]);
+
   return (
     <main className="min-h-screen bg-neutral-50">
       <TopNav />
 
       <section className="container mx-auto max-w-3xl px-4 py-8 space-y-6">
-        <h1 className="text-2xl font-bold">สรุปรายการจอง</h1>
+        <div className="flex items-end justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">สรุปรายการจอง</h1>
+          <div className="text-xs text-slate-500">
+            SaiLom • {new Date().getFullYear()}
+          </div>
+        </div>
 
-        {/* ปรับเวลา/จำนวนได้ที่นี่ */}
-        <Card className="p-4 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+        {/* ข้อมูลลูกค้า */}
+        <Card className="p-5 space-y-3 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">ข้อมูลลูกค้า</div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => router.push("/profile")}
+            >
+              แก้ไขโปรไฟล์
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-md bg-slate-50 border p-3">
+              <div className="text-slate-500">ชื่อ-สกุล</div>
+              <div className="font-semibold">
+                {loadingUser ? "…" : fullName || "-"}
+              </div>
+            </div>
+            <div className="rounded-md bg-slate-50 border p-3">
+              <div className="text-slate-500">อีเมล</div>
+              <div className="font-semibold break-all">
+                {loadingUser ? "…" : user?.user_email || "-"}
+              </div>
+            </div>
+            <div className="rounded-md bg-slate-50 border p-3">
+              <div className="text-slate-500">โทรศัพท์</div>
+              <div className="font-semibold">
+                {loadingUser ? "…" : user?.user_phone || "-"}
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        {/* รายละเอียดจอง */}
+        <Card className="p-5 space-y-4 shadow-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="text-sm">
               <div className="text-slate-600 mb-1">วันที่</div>
               <input
                 type="date"
-                className="w-full border rounded px-3 py-2 text-sm"
+                className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
               />
@@ -497,7 +674,7 @@ export default function ResultsPage() {
               <div className="text-slate-600 mb-1">เวลา</div>
               <input
                 type="time"
-                className="w-full border rounded px-3 py-2 text-sm"
+                className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
               />
@@ -507,24 +684,16 @@ export default function ResultsPage() {
               <input
                 type="number"
                 min={1}
-                className="w-full border rounded px-3 py-2 text-sm"
+                className="w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 value={people}
-                onChange={(e) => setPeople(Math.max(1, Number(e.target.value || 1)))}
-              />
-            </label>
-            <label className="text-sm">
-              <div className="text-slate-600 mb-1">ระยะเวลา (นาที)</div>
-              <input
-                type="number"
-                min={30}
-                step={15}
-                className="w-full border rounded px-3 py-2 text-sm"
-                value={duration}
-                onChange={(e) => setDuration(Math.max(30, Number(e.target.value || 30)))}
+                onChange={(e) =>
+                  setPeople(Math.max(1, Number(e.target.value || 1)))
+                }
               />
             </label>
           </div>
-          <div className="flex gap-2">
+
+          <div className="flex flex-wrap gap-2">
             <Button onClick={saveDraft}>บันทึกเวลา/จำนวน</Button>
             <Button variant="outline" onClick={() => router.push("/menu")}>
               ไปเลือกอาหาร
@@ -532,55 +701,74 @@ export default function ResultsPage() {
           </div>
         </Card>
 
-        <Card className="p-4 space-y-2">
-          <div className="text-sm text-slate-700">
-            วันที่: <b>{date}</b>
-          </div>
-          <div className="text-sm text-slate-700">
-            เวลา: <b>{time || "-"}</b>
-          </div>
-          <div className="text-sm text-slate-700">
-            ระยะเวลา: <b>{duration} นาที</b>
-          </div>
-          <div className="text-sm text-slate-700">
-            จำนวนคน: <b>{people || "-"}</b>
-          </div>
-          <div className="text-sm text-slate-700">
-            โต๊ะ: <b>{tableName || tableId || "-"}</b>
+        {/* สรุปข้อมูล */}
+        <Card className="p-5 space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-md bg-slate-50 border p-3">
+              <div className="text-slate-500">วันที่</div>
+              <div className="font-semibold">{date}</div>
+            </div>
+            <div className="rounded-md bg-slate-50 border p-3">
+              <div className="text-slate-500">เวลา</div>
+              <div className="font-semibold">{time || "-"}</div>
+            </div>
+            <div className="rounded-md bg-slate-50 border p-3">
+              <div className="text-slate-500">จำนวนคน</div>
+              <div className="font-semibold">{people || "-"}</div>
+            </div>
+            <div className="rounded-md bg-slate-50 border p-3 col-span-2 sm:col-span-3">
+              <div className="text-slate-500">โต๊ะ</div>
+              <div className="font-semibold">{tableName || tableId || "-"}</div>
+            </div>
           </div>
 
           {items.length > 0 && (
             <div className="pt-2" ref={itemsRef}>
-              <div className="font-semibold mb-1">รายการอาหาร</div>
+              <div className="font-semibold mb-2">รายการอาหาร</div>
               <ul className="text-sm list-disc pl-5 space-y-1">
                 {items.map((it, idx) => (
                   <li key={idx}>
-                    {it.name} × {it.qty} — {money(Number(it.price) * Number(it.qty))} บาท
+                    {it.name} × {it.qty} —{" "}
+                    {money(Number(it.price) * Number(it.qty))} บาท
+                    {it.note ? (
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        โน้ต: {it.note}
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>
             </div>
           )}
-
           <div className="pt-2 text-sm">
             {items.length > 0 ? (
-              <>ยอดชำระเมื่อยืนยัน OTP: <b>{money(estimate.grand)} บาท</b></>
+              <>
+                ยอดชำระเมื่อยืนยัน OTP: <b>{money(estimate.grand)} บาท</b>
+              </>
             ) : (
-              <>มัดจำ: <b>{money(estimate.deposit)} บาท</b></>
+              <>
+                มัดจำ: <b>{money(estimate.deposit)} บาท</b>
+              </>
             )}
           </div>
         </Card>
 
         {status === "INIT" && (
-          <Button className="w-full" disabled={creating} onClick={createReservation}>
+          <Button
+            className="w-full"
+            disabled={creating}
+            onClick={createReservation}
+          >
             {creating ? "กำลังสร้างใบจอง..." : "ยืนยันสร้างใบจอง"}
           </Button>
         )}
 
         {status === "CREATED" && (
-          <Card className="p-4 space-y-3">
+          <Card className="p-5 space-y-3">
             <div className="font-semibold">ส่ง OTP</div>
-            <p className="text-sm text-slate-600">เราจะส่งรหัส OTP ไปยังอีเมลในระบบของคุณ เพื่อยืนยันการจอง</p>
+            <p className="text-sm text-slate-600">
+              เราจะส่งรหัส OTP ไปยังอีเมลในระบบของคุณ เพื่อยืนยันการจอง
+            </p>
             <Button onClick={requestOtp} disabled={sendingOtp} className="w-full">
               {sendingOtp ? "กำลังส่ง..." : "ส่ง OTP"}
             </Button>
@@ -588,32 +776,45 @@ export default function ResultsPage() {
         )}
 
         {status === "OTP_SENT" && (
-          <Card className="p-4 space-y-3">
+          <Card className="p-5 space-y-3">
             <div className="font-semibold">ยืนยัน OTP</div>
             {previewUrl && (
-              <a className="text-xs text-indigo-600 underline" href={previewUrl} target="_blank" rel="noreferrer">
+              <a
+                className="text-xs text-indigo-600 underline"
+                href={previewUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
                 (ทดสอบ) เปิดจดหมายตัวอย่างใน Ethereal
               </a>
             )}
             <input
-              className="w-full border rounded px-3 py-2 text-sm"
+              className="w-full border rounded-md px-3 py-2 text-sm"
               placeholder="กรอกรหัส 6 หลัก"
               value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
               maxLength={6}
             />
-            <Button onClick={verifyOtp} disabled={verifying || otp.length < 4} className="w-full">
+            <Button
+              onClick={verifyOtp}
+              disabled={verifying || otp.length < 4}
+              className="w-full"
+            >
               {verifying ? "กำลังตรวจสอบ..." : "ยืนยัน OTP"}
             </Button>
           </Card>
         )}
 
         {status === "AWAITING_PAYMENT" && payment && (
-          <Card className="p-4 space-y-4">
-            <div className="font-semibold">ชำระเงิน ({money(payment.amount)} บาท)</div>
+          <Card className="p-5 space-y-4">
+            <div className="font-semibold">
+              ชำระเงิน ({money(payment.amount)} บาท)
+            </div>
+
+            {/* QR */}
             {payment.qrDataUrl ? (
               <>
-                <div className="mx-auto w-60 h-60 border rounded overflow-hidden">
+                <div className="mx-auto w-60 h-60 border rounded overflow-hidden bg-white">
                   <Image
                     src={payment.qrDataUrl}
                     alt="PromptPay QR"
@@ -625,30 +826,101 @@ export default function ResultsPage() {
                 </div>
                 <div className="text-center text-sm text-slate-600">
                   {expiresIn > 0
-                    ? `QR จะหมดอายุใน ${Math.floor(expiresIn / 60)}:${String(expiresIn % 60).padStart(2, "0")} นาที`
-                    : "QR หมดอายุแล้ว (ขอ OTP ใหม่เพื่อออก QR ใหม่)"}
+                    ? `QR จะหมดอายุใน ${Math.floor(expiresIn / 60)}:${String(
+                        expiresIn % 60
+                      ).padStart(2, "0")} นาที`
+                    : "QR หมดอายุแล้ว"}
                 </div>
               </>
             ) : (
               <div className="text-sm text-slate-600">ไม่พบ QR</div>
             )}
 
-            <div className="border-t pt-3 space-y-2">
-              <div className="text-sm font-medium">หรืออัปโหลดสลิป:</div>
-              <input type="file" accept="image/*" onChange={(e) => setSlip(e.target.files?.[0] || null)} />
-              <Button onClick={uploadSlip} disabled={!slip || uploadingSlip} className="w-full">
-                {uploadingSlip ? "กำลังอัปโหลด..." : "ส่งสลิปชำระเงิน"}
-              </Button>
-              <div className="text-xs text-slate-500">
-                สถานะปัจจุบัน: <b>{payment.status}</b> {polling ? "(กำลังตรวจสอบอัตโนมัติ…)" : ""}
-              </div>
+            {/* สลิป */}
+            <div className="border-t pt-3 space-y-3">
+              <div className="text-sm font-medium">สลิปชำระเงิน</div>
+
+              {payment.slipImage ? (
+                <div className="flex items-center gap-3">
+                  <div className="relative w-24 h-24 rounded border overflow-hidden bg-white">
+                    <Image
+                      src={payment.slipImage}
+                      alt="slip"
+                      fill
+                      className="object-cover"
+                      unoptimized
+                    />
+                  </div>
+                  <div className="text-xs text-slate-600">
+                    อัปโหลดแล้ว — สถานะ: <b>{payment.status}</b>{" "}
+                    {polling ? "(กำลังตรวจสอบอัตโนมัติ…)" : ""}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setSlip(e.target.files?.[0] || null)}
+                    disabled={expiresIn <= 0 || uploadingSlip}
+                  />
+                  <Button
+                    onClick={uploadSlip}
+                    disabled={!slip || uploadingSlip || expiresIn <= 0}
+                    className="w-full"
+                  >
+                    {uploadingSlip ? "กำลังอัปโหลด..." : "ส่งสลิปชำระเงิน"}
+                  </Button>
+                  <div className="text-xs text-slate-500">
+                    สถานะปัจจุบัน: <b>{payment.status}</b>{" "}
+                    {polling ? "(กำลังตรวจสอบอัตโนมัติ…)" : ""}
+                  </div>
+                </>
+              )}
+
+              {/* หมดเวลาแล้ว */}
+              {(expiresIn <= 0 || payment.status === "EXPIRED") &&
+                payment.status !== "PAID" && (
+                  <div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                    หมดเวลาชำระเงินแล้ว — กรุณาขอ OTP ใหม่เพื่อออก QR ใหม่
+                    <div className="mt-2">
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          if (!reservationId) return;
+                          try {
+                            await axios.post(
+                              `${config.apiUrl}/reservations/${reservationId}/request-otp`,
+                              {},
+                              { headers: { ...authHeader() } }
+                            );
+                            setStatus("OTP_SENT");
+                            setOtp("");
+                            Swal.fire({
+                              icon: "success",
+                              title: "ส่ง OTP ใหม่แล้ว",
+                              timer: 1500,
+                              showConfirmButton: false,
+                            });
+                          } catch (e: any) {
+                            showAxiosError(e, "ขอ OTP ใหม่ไม่สำเร็จ");
+                          }
+                        }}
+                      >
+                        ขอ OTP ใหม่
+                      </Button>
+                    </div>
+                  </div>
+                )}
             </div>
           </Card>
         )}
 
         {status === "CONFIRMED" && (
           <Card className="p-6 text-center space-y-3">
-            <div className="text-2xl font-bold text-emerald-600">ยืนยันการจองแล้ว 🎉</div>
+            <div className="text-2xl font-bold text-emerald-600">
+              ยืนยันการจองแล้ว
+            </div>
             <div className="text-sm text-slate-600">ขอบคุณที่ใช้บริการ</div>
             <div className="flex gap-2 justify-center">
               <Button onClick={() => router.push("/")}>กลับหน้าแรก</Button>

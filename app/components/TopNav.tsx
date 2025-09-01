@@ -1,27 +1,37 @@
+// app/components/TopNav.tsx
 "use client";
 
 import Link from "next/link";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import Swal from "sweetalert2";
 import { Button } from "@/components/ui/button";
 import { config } from "@/app/config";
 
-const LS_CART_KEY = "cart:v1";       // เมนู
-const LS_BOOKING_KEY = "booking:v1"; // โต๊ะ
+const LS_CART_KEY = "cart:v1";
+const LS_BOOKING_KEY = "booking:v1";
+const LS_USER_KEY = "user:v1";
+
+type Role = "user" | "staff" | "admin";
 
 type User = {
   user_id: number;
-  user_name: string;
+  user_name?: string | null;
   user_fname?: string | null;
   user_lname?: string | null;
   user_email: string;
   user_phone?: string | null;
   user_img?: string | null;
-  user_status?: number | null;
+  user_status?: number | null; // ⚠️ ไม่ใช้ตัดสินสิทธิ์อีกต่อไป
   google_id?: string | null;
+
+  // สิทธิ์จริงจาก backend
+  isAdmin?: boolean;
+  isStaff?: boolean;
+  roles?: Role[];
+  role?: Role;
 };
 
 type BookingDraft = {
@@ -29,7 +39,6 @@ type BookingDraft = {
   date?: string;
   time?: string;
   people?: number;
-  duration?: number;
   savedAt?: number;
 };
 
@@ -37,24 +46,20 @@ export default function TopNav() {
   const router = useRouter();
 
   const [count, setCount] = useState(0);
-  const [hasBooking, setHasBooking] = useState(false);
   const [foodItemsCount, setFoodItemsCount] = useState(0);
   const [mounted, setMounted] = useState(false);
 
-  // user auth state
   const [user, setUser] = useState<User | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
-  // ---------- อ่าน Cart + Booking รวมกัน ----------
+  /* ---------------- cart/booking snapshot ---------------- */
   useEffect(() => {
     setMounted(true);
 
     const readSnapshot = () => {
       let total = 0;
       let itemsCount = 0;
-      let hasBk = false;
 
-      // 1) จำนวนเมนูในตะกร้า
       try {
         const raw = localStorage.getItem(LS_CART_KEY);
         const obj = raw ? (JSON.parse(raw) as Record<string, { qty: number }>) : {};
@@ -62,31 +67,32 @@ export default function TopNav() {
         total += itemsCount;
       } catch {}
 
-      // 2) ถ้าเลือกโต๊ะอยู่ให้ +1
       try {
         const braw = localStorage.getItem(LS_BOOKING_KEY);
         if (braw) {
           const b = JSON.parse(braw);
-          if (b && b.tableId) {
-            hasBk = true;
-            total += 1;
-          }
+          if (b && b.tableId) total += 1;
         }
       } catch {}
 
-      return { total, hasBk, itemsCount };
+      return { total, itemsCount };
     };
 
     const sync = () => {
       const s = readSnapshot();
       setCount(s.total);
-      setHasBooking(s.hasBk);
       setFoodItemsCount(s.itemsCount);
     };
 
-    sync(); // แรกเข้า
+    sync();
     const onStorage = (e: StorageEvent) => {
       if (e.key === LS_CART_KEY || e.key === LS_BOOKING_KEY) sync();
+      if (e.key === LS_USER_KEY) {
+        try {
+          const raw = e.newValue;
+          setUser(raw ? (JSON.parse(raw) as User) : null);
+        } catch {}
+      }
     };
     const onCart = () => sync();
     const onBooking = () => sync();
@@ -110,26 +116,79 @@ export default function TopNav() {
     };
   }, []);
 
-  // ---------- โหลดข้อมูลผู้ใช้จาก token ----------
+  /* ---------------- โหลดผู้ใช้ + normalize ---------------- */
   useEffect(() => {
     let ignore = false;
+
+    const publishUser = (u: User | null) => {
+      try {
+        if (u) {
+          localStorage.setItem(LS_USER_KEY, JSON.stringify(u));
+          (window as any).__USER__ = u;
+        } else {
+          localStorage.removeItem(LS_USER_KEY);
+          (window as any).__USER__ = null;
+        }
+        window.dispatchEvent(new CustomEvent("user:updated", { detail: u }));
+      } catch {}
+    };
+
+    const normalizeUser = (raw: any): User | null => {
+      if (!raw) return null;
+      const u = raw.user ?? raw;
+
+      const roles: Role[] | undefined = u.roles;
+      const role: Role =
+        u.role ??
+        (roles?.includes("admin") ? "admin" :
+         roles?.includes("staff") ? "staff" : "user");
+
+      const ensuredUserName =
+        u.user_name ?? (typeof u.user_email === "string" ? u.user_email.split("@")[0] : null);
+
+      return {
+        user_id: u.user_id,
+        user_name: ensuredUserName,
+        user_fname: u.user_fname ?? null,
+        user_lname: u.user_lname ?? null,
+        user_email: u.user_email,
+        user_phone: u.user_phone ?? null,
+        user_img: u.user_img ?? null,
+        user_status: u.user_status ?? null, // ไม่ใช้ตัดสินสิทธิ์
+        google_id: u.google_id ?? null,
+        isAdmin: !!u.isAdmin,
+        isStaff: !!u.isStaff,
+        roles: Array.isArray(roles) ? roles : undefined,
+        role,
+      };
+    };
 
     const fetchMe = async () => {
       setLoadingUser(true);
       try {
-        const token = localStorage.getItem("token");
+        const token = localStorage.getItem("token") || localStorage.getItem("authToken");
         if (!token) {
-          setUser(null);
+          if (!ignore) {
+            setUser(null);
+            publishUser(null);
+          }
           return;
         }
         const { data } = await axios.get(`${config.apiUrl}/user_info`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!ignore) setUser(data?.user ?? null);
+        const u = normalizeUser(data);
+        if (!ignore) {
+          setUser(u);
+          publishUser(u);
+        }
       } catch {
-        // token เสีย/หมดอายุ → ลบออก
         localStorage.removeItem("token");
-        if (!ignore) setUser(null);
+        localStorage.removeItem("authToken");
+        if (!ignore) {
+          setUser(null);
+          publishUser(null);
+        }
       } finally {
         if (!ignore) setLoadingUser(false);
       }
@@ -137,34 +196,36 @@ export default function TopNav() {
 
     fetchMe();
 
-    // กรณีข้ามแท็บ: ถ้า token เปลี่ยนจากแท็บอื่น ให้รีเฟรช state
     const onStorage = (e: StorageEvent) => {
-      if (e.key === "token") fetchMe();
+      if (e.key === "token" || e.key === "authToken") fetchMe();
+      if (e.key === LS_USER_KEY) {
+        try {
+          const raw = e.newValue;
+          setUser(raw ? (JSON.parse(raw) as User) : null);
+        } catch {}
+      }
     };
+    const onRefresh = () => fetchMe();
+
     window.addEventListener("storage", onStorage);
+    window.addEventListener("user:refresh", onRefresh as any);
     return () => {
       ignore = true;
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("user:refresh", onRefresh as any);
     };
   }, []);
 
-  // ---------- utils ----------
-  const displayName = user
-    ? ([user.user_fname, user.user_lname].filter(Boolean).join(" ").trim() || user.user_name)
-    : "";
+  /* ---------------- utils ---------------- */
+  const displayName =
+    user ? ([user.user_fname, user.user_lname].filter(Boolean).join(" ").trim() || user.user_name || "") : "";
 
   const initials = (name: string) =>
-    name
-      .split(" ")
-      .filter(Boolean)
-      .map((s) => s[0]?.toUpperCase())
-      .slice(0, 2)
-      .join("");
+    name.split(" ").filter(Boolean).map((s) => s[0]?.toUpperCase()).slice(0, 2).join("");
 
   const imageUrl = (p?: string | null) => {
     if (!p) return null;
     if (/^https?:\/\//i.test(p)) return p;
-    // เสิร์ฟ static ผ่าน /uploads; ป้องกัน // ซ้อนกัน
     return `${config.apiUrl}/${p.replace(/^\/+/, "")}`;
   };
 
@@ -182,22 +243,23 @@ export default function TopNav() {
 
     if (res.isConfirmed) {
       localStorage.removeItem("token");
+      localStorage.removeItem("authToken");
       localStorage.removeItem("tempToken");
-      localStorage.removeItem("booking:v1");
-      localStorage.removeItem("cart:v1");
+      localStorage.removeItem(LS_BOOKING_KEY);
+      localStorage.removeItem(LS_CART_KEY);
+      localStorage.removeItem(LS_USER_KEY);
+
+      try {
+        (window as any).__USER__ = null;
+        window.dispatchEvent(new CustomEvent("user:updated", { detail: null }));
+      } catch {}
 
       setUser(null);
-      await Swal.fire({
-        icon: "success",
-        title: "ออกจากระบบสำเร็จ",
-        showConfirmButton: false,
-        timer: 1100,
-      });
+      await Swal.fire({ icon: "success", title: "ออกจากระบบสำเร็จ", showConfirmButton: false, timer: 1100 });
       router.push("/");
     }
   };
 
-  // ---------- helpers สำหรับ Cart ----------
   const readBooking = (): BookingDraft | null => {
     try {
       const raw = localStorage.getItem(LS_BOOKING_KEY);
@@ -213,25 +275,19 @@ export default function TopNav() {
     if (bk?.date) sp.set("date", bk.date);
     if (bk?.time) sp.set("time", bk.time);
     if (typeof bk?.people === "number" && bk.people > 0) sp.set("people", String(bk.people));
-    if (typeof bk?.duration === "number" && bk.duration > 0) sp.set("duration", String(bk.duration));
     if (bk?.tableId) sp.set("tableId", String(bk.tableId));
     if (openCart) sp.set("openCart", "1");
     const qs = sp.toString();
     return `/results${qs ? `?${qs}` : ""}`;
   };
 
-  // ---- คลิกปุ่ม Cart: ตัดสินใจเส้นทางตามสถานะ ----
   const handleCartClick = async () => {
     const bk = readBooking();
 
-    // 1) ถ้ามี booking แล้ว → ไปหน้า results พร้อมแนบพารามิเตอร์ครบ (รวม tableId)
     if (bk?.tableId) {
-      // ถ้ามีอาหารด้วย ให้เปิดตะกร้า
       router.push(buildResultsUrl(foodItemsCount > 0));
       return;
     }
-
-    // 2) ยังไม่มี booking แต่มีอาหารในตะกร้า → ให้ไปเลือกโต๊ะก่อน
     if (foodItemsCount > 0) {
       const r = await Swal.fire({
         icon: "info",
@@ -239,15 +295,20 @@ export default function TopNav() {
         text: "กรุณาเลือกโต๊ะก่อนดูสรุปคำสั่งซื้อ",
         confirmButtonText: "ไปเลือกโต๊ะ",
       });
-      if (r.isConfirmed) {
-        router.push("/table");
-      }
+      if (r.isConfirmed) router.push("/table");
       return;
     }
-
-    // 3) ไม่มีทั้งโต๊ะและอาหาร → ไปหน้าเมนูเพื่อเริ่มสั่ง
     router.push("/menu");
   };
+
+  // ✅ แสดง Dashboard เฉพาะ admin/staff เท่านั้น (ตัด fallback user_status ออก)
+  const isStaffOrAdmin = useMemo(() => {
+    if (!user) return false;
+    if (user.role === "admin" || user.role === "staff") return true;
+    if (user.isAdmin === true || user.isStaff === true) return true;
+    if (Array.isArray(user.roles) && user.roles.some((r) => r === "admin" || r === "staff")) return true;
+    return false;
+  }, [user]);
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b">
@@ -270,13 +331,25 @@ export default function TopNav() {
           <li><Link href="/" className="text-gray-700 hover:text-indigo-600">Home</Link></li>
           <li><Link href="/table" className="text-gray-700 hover:text-indigo-600">Table</Link></li>
           <li><Link href="/menu" className="text-gray-700 hover:text-indigo-600">Menu</Link></li>
+          <li><Link href="/reservations" className="text-gray-700 hover:text-indigo-600">Reservations</Link></li>
           <li><Link href="/about" className="text-gray-700 hover:text-indigo-600">About</Link></li>
-          <li><Link href="http://localhost:3000/backoffice/dashboard" className="text-gray-700 hover:text-indigo-600" target="_blank" rel="noopener noreferrer">Dashboard</Link></li>
+          {isStaffOrAdmin && (
+            <li>
+              <Link
+                href="http://localhost:3000/backoffice/dashboard"
+                className="text-gray-700 hover:text-indigo-600"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Dashboard
+              </Link>
+            </li>
+          )}
         </ul>
 
         {/* right */}
         <div className="flex items-center gap-2">
-          {/* Cart: ใช้ button เพื่อควบคุมเส้นทางด้วย JS */}
+          {/* Cart */}
           <button
             onClick={handleCartClick}
             className="cursor-pointer relative inline-flex items-center rounded-full border px-3 py-1.5 text-sm hover:bg-slate-50 transition"
@@ -310,10 +383,12 @@ export default function TopNav() {
                   />
                 ) : (
                   <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-700 grid place-items-center text-xs font-semibold">
-                    {initials(displayName || user.user_name)}
+                    {initials(displayName || user.user_name || "")}
                   </div>
                 )}
-                <span className="text-sm text-gray-700 max-w-[140px] truncate">{displayName}</span>
+                <span className="text-sm text-gray-700 max-w-[140px] truncate">
+                  {displayName || user.user_name || user.user_email}
+                </span>
               </Link>
 
               <Button

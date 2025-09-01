@@ -147,10 +147,11 @@ export default function PublicTablePage() {
   const date = search.get("date") ?? new Date().toISOString().slice(0, 10);
   const time = search.get("time") ?? "";
   const people = toNum(search.get("people"));
-  const durationMin = toNum(search.get("duration")) || 90;
+  // const durationMin = toNum(search.get("duration")) || 90;
+const DEFAULT_DURATION_MIN = 60; 
+const start = useMemo(() => (time ? new Date(`${date}T${time}:00`) : null), [date, time]);
+const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_MIN * 60000) : null), [start]);
 
-  const start = useMemo(() => (time ? new Date(`${date}T${time}:00`) : null), [date, time]);
-  const end = useMemo(() => (start ? new Date(start.getTime() + durationMin * 60000) : null), [start, durationMin]);
 
   const [tables, setTables] = useState<TableVM[]>([]);
   const [grid, setGrid] = useState<GridSize | null>(null);
@@ -264,44 +265,45 @@ export default function PublicTablePage() {
   const numCols = grid?.cols ?? 10;
 
   // คลิกเลือกโต๊ะ → เซฟลง localStorage + เลือกว่าจะไป "เมนู" หรือ "สรุปการจอง"
-  const goNext = async (t: TableVM) => {
-    const draft = {
-      date,
-      time,
-      people: Number(people || t.seats),
-      tableId: String(t.id),
-      duration: Number(durationMin),
-      savedAt: Date.now(),
-    };
-    try {
-      localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(draft));
-      window.dispatchEvent(new Event("booking:changed"));
-      window.dispatchEvent(new Event("cart:changed"));
-    } catch {}
-
-    const query = new URLSearchParams({
-      date: draft.date,
-      ...(draft.time ? { time: draft.time } : {}),
-      people: String(draft.people),
-      tableId: draft.tableId,
-      duration: String(draft.duration),
-    }).toString();
-
-    const r = await Swal.fire({
-      icon: "question",
-      title: "เลือกโต๊ะแล้ว",
-      text: "ต้องการไปเลือกอาหารเลยไหม?",
-      showCancelButton: true,
-      confirmButtonText: "ไปเลือกอาหาร",
-      cancelButtonText: "ไปหน้าสรุปการจอง",
-    });
-
-    if (r.isConfirmed) {
-      window.location.href = "/menu";
-    } else {
-      window.location.href = `/results?${query}`;
-    }
+// goNext: ตัด duration ออก และไม่ setItem ซ้ำ
+const goNext = async (t: TableVM) => {
+  const draft = {
+    date,
+    time,
+    people: Number(people || t.seats),
+    tableId: String(t.id),
+    savedAt: Date.now(),
   };
+  try {
+    localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(draft));
+    window.dispatchEvent(new Event("booking:changed"));
+    window.dispatchEvent(new Event("cart:changed"));
+  } catch {}
+
+  const query = new URLSearchParams({
+    date: draft.date,
+    ...(draft.time ? { time: draft.time } : {}),
+    people: String(draft.people),
+    tableId: draft.tableId,
+  }).toString();
+
+  const r = await Swal.fire({
+    icon: "question",
+    title: "เลือกโต๊ะแล้ว",
+    text: "ต้องการไปเลือกอาหารเลยไหม?",
+    showCancelButton: true,
+    confirmButtonText: "ไปเลือกอาหาร",
+    cancelButtonText: "ไปหน้าสรุปการจอง",
+  });
+
+  if (r.isConfirmed) {
+    // ใช้ router.push ก็ได้ จะลื่นกว่า
+    window.location.href = "/menu";
+  } else {
+    window.location.href = `/results?${query}`;
+  }
+};
+
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -310,11 +312,10 @@ export default function PublicTablePage() {
       <section className="container mx-auto max-w-6xl px-4 py-8">
         <div className="mb-4">
           <h1 className="text-2xl font-bold text-slate-900">เลือกโต๊ะนั่ง</h1>
-          <p className="text-sm text-slate-600">
-            {time
-              ? `วันที่ ${date} เวลา ${time} (ประมาณ ${durationMin} นาที) — แตะโต๊ะเพื่อจอง`
-              : "ผังหน้าบ้าน (ตาราง 80px) — แตะโต๊ะเพื่อจอง"}
-          </p>
+<p className="text-sm text-slate-600">
+  {time ? `วันที่ ${date} เวลา ${time} — แตะโต๊ะเพื่อจอง` : "ผังหน้าบ้าน (ตาราง 80px) — แตะโต๊ะเพื่อจอง"}
+</p>
+
         </div>
 
         <div className="relative w-full overflow-auto rounded-2xl border border-dashed border-violet-300 bg-white/60 p-3 shadow-sm">
