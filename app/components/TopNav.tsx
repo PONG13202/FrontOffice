@@ -1,4 +1,3 @@
-// app/components/TopNav.tsx
 "use client";
 
 import Link from "next/link";
@@ -9,13 +8,13 @@ import axios from "axios";
 import Swal from "sweetalert2";
 import { Button } from "@/components/ui/button";
 import { config } from "@/app/config";
+import { readBookingSafe, clearBooking } from "@/lib/bookingStore";
 
 const LS_CART_KEY = "cart:v1";
-const LS_BOOKING_KEY = "booking:v1";
+const LS_BOOKING_KEY = "booking:v1"; // legacy (ยังลบตอน sign out)
 const LS_USER_KEY = "user:v1";
 
 type Role = "user" | "staff" | "admin";
-
 type User = {
   user_id: number;
   user_name?: string | null;
@@ -24,27 +23,17 @@ type User = {
   user_email: string;
   user_phone?: string | null;
   user_img?: string | null;
-  user_status?: number | null; // ⚠️ ไม่ใช้ตัดสินสิทธิ์อีกต่อไป
+  user_status?: number | null;
   google_id?: string | null;
-
-  // สิทธิ์จริงจาก backend
   isAdmin?: boolean;
   isStaff?: boolean;
   roles?: Role[];
   role?: Role;
 };
-
-type BookingDraft = {
-  tableId?: string;
-  date?: string;
-  time?: string;
-  people?: number;
-  savedAt?: number;
-};
+type BookingDraft = { tableId?: string; date?: string; time?: string; people?: number; savedAt?: number };
 
 export default function TopNav() {
   const router = useRouter();
-
   const [count, setCount] = useState(0);
   const [foodItemsCount, setFoodItemsCount] = useState(0);
   const [mounted, setMounted] = useState(false);
@@ -52,29 +41,22 @@ export default function TopNav() {
   const [user, setUser] = useState<User | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
-  /* ---------------- cart/booking snapshot ---------------- */
   useEffect(() => {
     setMounted(true);
 
     const readSnapshot = () => {
       let total = 0;
       let itemsCount = 0;
-
       try {
         const raw = localStorage.getItem(LS_CART_KEY);
         const obj = raw ? (JSON.parse(raw) as Record<string, { qty: number }>) : {};
         itemsCount = Object.values(obj).reduce((a, c: any) => a + (c?.qty || 0), 0);
         total += itemsCount;
       } catch {}
-
       try {
-        const braw = localStorage.getItem(LS_BOOKING_KEY);
-        if (braw) {
-          const b = JSON.parse(braw);
-          if (b && b.tableId) total += 1;
-        }
+        const bk = readBookingSafe();
+        if (bk?.tableId) total += 1;
       } catch {}
-
       return { total, itemsCount };
     };
 
@@ -86,7 +68,7 @@ export default function TopNav() {
 
     sync();
     const onStorage = (e: StorageEvent) => {
-      if (e.key === LS_CART_KEY || e.key === LS_BOOKING_KEY) sync();
+      if (e.key === LS_CART_KEY) sync();
       if (e.key === LS_USER_KEY) {
         try {
           const raw = e.newValue;
@@ -116,7 +98,6 @@ export default function TopNav() {
     };
   }, []);
 
-  /* ---------------- โหลดผู้ใช้ + normalize ---------------- */
   useEffect(() => {
     let ignore = false;
 
@@ -136,16 +117,13 @@ export default function TopNav() {
     const normalizeUser = (raw: any): User | null => {
       if (!raw) return null;
       const u = raw.user ?? raw;
-
       const roles: Role[] | undefined = u.roles;
       const role: Role =
         u.role ??
         (roles?.includes("admin") ? "admin" :
          roles?.includes("staff") ? "staff" : "user");
-
       const ensuredUserName =
         u.user_name ?? (typeof u.user_email === "string" ? u.user_email.split("@")[0] : null);
-
       return {
         user_id: u.user_id,
         user_name: ensuredUserName,
@@ -154,7 +132,7 @@ export default function TopNav() {
         user_email: u.user_email,
         user_phone: u.user_phone ?? null,
         user_img: u.user_img ?? null,
-        user_status: u.user_status ?? null, // ไม่ใช้ตัดสินสิทธิ์
+        user_status: u.user_status ?? null,
         google_id: u.google_id ?? null,
         isAdmin: !!u.isAdmin,
         isStaff: !!u.isStaff,
@@ -216,18 +194,11 @@ export default function TopNav() {
     };
   }, []);
 
-  /* ---------------- utils ---------------- */
   const displayName =
     user ? ([user.user_fname, user.user_lname].filter(Boolean).join(" ").trim() || user.user_name || "") : "";
-
   const initials = (name: string) =>
     name.split(" ").filter(Boolean).map((s) => s[0]?.toUpperCase()).slice(0, 2).join("");
-
-  const imageUrl = (p?: string | null) => {
-    if (!p) return null;
-    if (/^https?:\/\//i.test(p)) return p;
-    return `${config.apiUrl}/${p.replace(/^\/+/, "")}`;
-  };
+  const imageUrl = (p?: string | null) => (/^https?:\/\//i.test(String(p)) ? String(p) : (p ? `${config.apiUrl}/${String(p).replace(/^\/+/, "")}` : null));
 
   const handleSignOut = async () => {
     const res = await Swal.fire({
@@ -240,14 +211,15 @@ export default function TopNav() {
       confirmButtonText: "ออกจากระบบ",
       cancelButtonText: "ยกเลิก",
     });
-
     if (res.isConfirmed) {
       localStorage.removeItem("token");
       localStorage.removeItem("authToken");
       localStorage.removeItem("tempToken");
-      localStorage.removeItem(LS_BOOKING_KEY);
       localStorage.removeItem(LS_CART_KEY);
+      localStorage.removeItem(LS_BOOKING_KEY); // legacy
+      localStorage.removeItem("booking:v2");   // ใหม่
       localStorage.removeItem(LS_USER_KEY);
+      clearBooking();
 
       try {
         (window as any).__USER__ = null;
@@ -261,12 +233,7 @@ export default function TopNav() {
   };
 
   const readBooking = (): BookingDraft | null => {
-    try {
-      const raw = localStorage.getItem(LS_BOOKING_KEY);
-      return raw ? (JSON.parse(raw) as BookingDraft) : null;
-    } catch {
-      return null;
-    }
+    try { return readBookingSafe(); } catch { return null; }
   };
 
   const buildResultsUrl = (openCart: boolean) => {
@@ -283,7 +250,6 @@ export default function TopNav() {
 
   const handleCartClick = async () => {
     const bk = readBooking();
-
     if (bk?.tableId) {
       router.push(buildResultsUrl(foodItemsCount > 0));
       return;
@@ -301,7 +267,6 @@ export default function TopNav() {
     router.push("/menu");
   };
 
-  // ✅ แสดง Dashboard เฉพาะ admin/staff เท่านั้น (ตัด fallback user_status ออก)
   const isStaffOrAdmin = useMemo(() => {
     if (!user) return false;
     if (user.role === "admin" || user.role === "staff") return true;
@@ -313,9 +278,8 @@ export default function TopNav() {
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b">
       <nav className="container mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
-        {/* left */}
         <div className="flex items-center gap-3">
-          <button aria-label="menu" className="lg:hidden">
+          <button aria-label="menu" className="lg:hidden cursor-pointer">
             <svg width="24" height="24" viewBox="0 0 24 24">
               <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
@@ -326,7 +290,6 @@ export default function TopNav() {
           </Link>
         </div>
 
-        {/* center */}
         <ul className="hidden lg:flex items-center gap-6 text-sm">
           <li><Link href="/" className="text-gray-700 hover:text-indigo-600">Home</Link></li>
           <li><Link href="/table" className="text-gray-700 hover:text-indigo-600">Table</Link></li>
@@ -347,9 +310,7 @@ export default function TopNav() {
           )}
         </ul>
 
-        {/* right */}
         <div className="flex items-center gap-2">
-          {/* Cart */}
           <button
             onClick={handleCartClick}
             className="cursor-pointer relative inline-flex items-center rounded-full border px-3 py-1.5 text-sm hover:bg-slate-50 transition"
@@ -365,7 +326,6 @@ export default function TopNav() {
             </span>
           </button>
 
-          {/* Auth area */}
           {mounted && !loadingUser && user ? (
             <>
               <Link
@@ -403,7 +363,7 @@ export default function TopNav() {
               <Button
                 variant="outline"
                 asChild
-                className="hidden sm:inline-flex border-indigo-300 text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-800 focus-visible:ring-2 focus-visible:ring-indigo-500/50 transition shadow-sm hover:shadow-md"
+                className="hidden sm:inline-flex border-indigo-300 text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-800 focus-visible:ring-2 focus-visible:ring-indigo-500/50 transition shadow-sm hover:shadow-md cursor-pointer"
               >
                 <Link href="/signIn">Sign in</Link>
               </Button>

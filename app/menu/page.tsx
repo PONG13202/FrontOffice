@@ -14,8 +14,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { cn } from "@/lib/utils";
 import { ShoppingCart, Plus, Minus, Trash2 } from "lucide-react";
 import { socket } from "@/app/socket";
+import { readBookingSafe, clearBooking, writeBookingSafe } from "@/lib/bookingStore";
 
-/* ============================ Types ============================ */
+/* ==== Types ==== */
 type MenuImage = { menu_image_id: number; menu_id: number; menu_image: string; menu_status: number };
 type FoodMenuTypeJoin = { typefood?: { id?: number; name?: string; typefood_id?: number; typefood_name?: string }; typefoodId?: number };
 type MenuItem = {
@@ -30,7 +31,6 @@ type MenuItem = {
 type FoodType = { id?: number; name?: string; typefood_id?: number; typefood_name?: string };
 type CartItem = { id: number; name: string; price: number; qty: number; img?: string | null; note?: string };
 
-/* ============================ Utils ============================ */
 const THB = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
 const money = (n: number) => THB.format(n);
 const imgAbsUrl = (p?: string | null) => (!p ? "" : p.startsWith("http") ? p : `${config.apiUrl}${p}`);
@@ -44,7 +44,9 @@ const getTypefoodName = (t: any): string | undefined =>
 const getTypefoodId = (t: any): number | undefined =>
   t?.typefood?.typefood_id ?? t?.typefood?.id ?? t?.typefoodId ?? t?.id;
 const typeNamesOf = (m?: MenuItem | null): string[] => {
-  const names = (m?.Typefoods ?? []).map((t: any) => getTypefoodName(t)).filter((s): s is string => !!s && s.trim().length > 0);
+  const names = (m?.Typefoods ?? [])
+    .map((t: any) => getTypefoodName(t))
+    .filter((s): s is string => !!s && s.trim().length > 0);
   return Array.from(new Set(names));
 };
 const normalizeFoodTypes = (arr: any[]): { id: number; name: string }[] =>
@@ -52,7 +54,7 @@ const normalizeFoodTypes = (arr: any[]): { id: number; name: string }[] =>
     .map((t) => ({ id: t?.id ?? t?.typefood_id, name: t?.name ?? t?.typefood_name }))
     .filter((t) => typeof t.id === "number" && !!t.name);
 
-/* ============================ Card ============================ */
+/* ==== MenuCard ==== */
 function MenuCard({
   item,
   count,
@@ -68,10 +70,13 @@ function MenuCard({
 }) {
   const cover = coverOf(item);
   const types = typeNamesOf(item);
-
   return (
     <Card className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
-      <button type="button" onClick={onOpenDetail} className="relative aspect-[4/3] w-full overflow-hidden bg-slate-100">
+      <button
+        type="button"
+        onClick={onOpenDetail}
+        className="cursor-pointer relative aspect-[4/3] w-full overflow-hidden bg-slate-100"
+      >
         {cover ? (
           <Image
             src={imgAbsUrl(cover)}
@@ -82,12 +87,14 @@ function MenuCard({
             unoptimized
           />
         ) : (
-          <div className="grid h-full w-full place-items-center text-xs text-slate-400">ไม่มีรูปภาพ</div>
+          <div className="grid h-full w-full place-items-center text-xs text-slate-400">
+            ไม่มีรูปภาพ
+          </div>
         )}
       </button>
 
       <div className="flex flex-col gap-1 px-3 pt-2">
-        <button type="button" onClick={onOpenDetail} className="text-left">
+        <button type="button" onClick={onOpenDetail} className="text-left cursor-pointer">
           <div className="text-sm font-semibold text-slate-900">{money(item.menu_price)}</div>
         </button>
 
@@ -106,18 +113,29 @@ function MenuCard({
           </div>
         )}
 
-        <button type="button" onClick={onOpenDetail} className="text-left">
+        <button type="button" onClick={onOpenDetail} className="text-left cursor-pointer">
           <div className="line-clamp-2 text-sm text-slate-700">{item.menu_name}</div>
         </button>
       </div>
 
       <div className="mt-auto border-t px-3 py-3">
         <div className="flex items-center justify-center gap-3">
-          <Button size="icon" variant="secondary" className="h-8 w-8 rounded-full" onClick={onDec} disabled={count <= 0}>
+          <Button
+            size="icon"
+            variant="secondary"
+            className="h-8 w-8 rounded-full cursor-pointer"
+            onClick={onDec}
+            disabled={count <= 0}
+          >
             <Minus className="h-4 w-4" />
           </Button>
           <span className="min-w-5 text-center text-sm tabular-nums">{count}</span>
-          <Button size="icon" variant="secondary" className="h-8 w-8 rounded-full" onClick={onInc}>
+          <Button
+            size="icon"
+            variant="secondary"
+            className="h-8 w-8 rounded-full cursor-pointer"
+            onClick={onInc}
+          >
             <Plus className="h-4 w-4" />
           </Button>
         </div>
@@ -126,12 +144,11 @@ function MenuCard({
   );
 }
 
-/* ============================ Page ============================ */
+/* ==== Cart / Booking ==== */
 const LS_CART_KEY = "cart:v1";
-const LS_BOOKING_KEY = "booking:v1";
-
 type BookingDraft = {
   tableId?: string;
+  tableName?: string;
   date?: string;
   time?: string;
   people?: number;
@@ -142,22 +159,19 @@ type BookingDraft = {
 export default function MenuPage() {
   const router = useRouter();
 
-  // data
   const [menus, setMenus] = useState<MenuItem[]>([]);
   const [foodTypes, setFoodTypes] = useState<FoodType[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // search & category
   const [q, setQ] = useState("");
   const [catId, setCatId] = useState<number | null>(null);
 
-  // cart (เริ่มต้นว่าง แล้วค่อยโหลดจาก LS หลัง mount เพื่อกัน hydration mismatch)
   const [cart, setCart] = useState<Record<number, CartItem>>({});
-  const [ready, setReady] = useState(false); // โหลดจาก LS แล้วหรือยัง
-  const lastSavedRef = useRef<string>(""); // ป้องกันเขียนซ้ำ/ทับค่าจริงตอนแรก
+  const [ready, setReady] = useState(false);
+  const lastSavedRef = useRef<string>("");
   const [cartOpen, setCartOpen] = useState(false);
 
-  // อ่านจาก localStorage หลัง mount
+  // ===== CART: init + sync =====
   useEffect(() => {
     const readCart = (): Record<number, CartItem> => {
       try {
@@ -166,7 +180,8 @@ export default function MenuPage() {
         const obj = JSON.parse(raw) as Record<string, CartItem>;
         const out: Record<number, CartItem> = {};
         for (const [k, v] of Object.entries(obj)) {
-          if (v && typeof (v as any).id === "number" && typeof (v as any).qty === "number") out[Number(k)] = v as CartItem;
+          if (v && typeof (v as any).id === "number" && typeof (v as any).qty === "number")
+            out[Number(k)] = v as CartItem;
         }
         return out;
       } catch {
@@ -179,7 +194,6 @@ export default function MenuPage() {
     setReady(true);
   }, []);
 
-  // เขียนกลับ localStorage เฉพาะหลังโหลดเสร็จ และเมื่อค่ามีการเปลี่ยน
   useEffect(() => {
     if (!ready) return;
     try {
@@ -191,7 +205,6 @@ export default function MenuPage() {
     } catch {}
   }, [cart, ready]);
 
-  // sync เมื่อแท็บอื่นแก้, โฟกัสกลับมา, หรือกลับจากหน้าอื่น (bfcache)
   useEffect(() => {
     if (!ready) return;
 
@@ -232,116 +245,23 @@ export default function MenuPage() {
     };
   }, [ready]);
 
-  // ==== อ่าน booking draft จาก localStorage เพื่อ "จำค่าโต๊ะ" ====
+  // ===== BOOKING: read & subscribe =====
   const [booking, setBooking] = useState<BookingDraft | null>(null);
   useEffect(() => {
-    const read = () => {
-      try {
-        const raw = localStorage.getItem(LS_BOOKING_KEY);
-        setBooking(raw ? JSON.parse(raw) : null);
-      } catch {
-        setBooking(null);
-      }
-    };
+    const read = () => setBooking(readBookingSafe());
     read();
-
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === LS_BOOKING_KEY) {
-        try {
-          setBooking(e.newValue ? JSON.parse(e.newValue) : null);
-        } catch {
-          setBooking(null);
-        }
-      }
-    };
     const onVisible = () => {
       if (document.visibilityState === "visible") read();
     };
-
-    window.addEventListener("storage", onStorage);
+    window.addEventListener("booking:changed", read as any);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("booking:changed", read as any);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
-  // helper: สร้าง URL ไปหน้า results โดยแนบค่าที่มี + ให้เปิดตะกร้า
-  const buildResultsUrl = (openCart: boolean = true) => {
-    const sp = new URLSearchParams();
-    if (booking?.date) sp.set("date", booking.date);
-    if (booking?.time) sp.set("time", booking.time);
-    if (typeof booking?.people === "number" && booking.people > 0) sp.set("people", String(booking.people));
-    if (typeof booking?.duration === "number" && booking.duration > 0) sp.set("duration", String(booking.duration));
-    if (booking?.tableId) sp.set("tableId", String(booking.tableId));
-    if (openCart) sp.set("openCart", "1");
-    const qs = sp.toString();
-    return `/results${qs ? `?${qs}` : ""}`;
-  };
-
-  /* -------------------- Filter -------------------- */
-  const filtered = useMemo(() => {
-    const kw = q.trim().toLowerCase();
-    return menus.filter((m) => {
-      const matchQ = !kw || m.menu_name.toLowerCase().includes(kw) || String(m.menu_price).includes(kw);
-      const matchCat = !catId || (m.Typefoods ?? []).some((t) => getTypefoodId(t) === catId);
-      return matchQ && matchCat;
-    });
-  }, [menus, q, catId]);
-
-  /* -------------------- Cart helpers -------------------- */
-  const NOTE_MAX = 160;
-
-  const bump = (item: MenuItem, delta: number) => {
-    setCart((prev) => {
-      const existed = prev[item.menu_id];
-      const nextQty = (existed?.qty || 0) + delta;
-      if (nextQty <= 0) {
-        const { [item.menu_id]: _omit, ...rest } = prev;
-        return rest;
-      }
-      return {
-        ...prev,
-        [item.menu_id]: {
-          id: item.menu_id,
-          name: item.menu_name,
-          price: item.menu_price,
-          qty: Math.min(99, nextQty),
-          img: coverOf(item) ?? undefined,
-          note: existed?.note ?? "",
-        },
-      };
-    });
-  };
-
-  const setNote = (id: number, val: string) =>
-    setCart((p) => (p[id] ? { ...p, [id]: { ...p[id], note: val.slice(0, NOTE_MAX) } } : p));
-
-  const incCart = (id: number) =>
-    setCart((p) => ({ ...p, [id]: { ...p[id], qty: Math.min(99, (p[id]?.qty ?? 0) + 1) } }));
-
-  const decCart = (id: number) =>
-    setCart((p) =>
-      (p[id]?.qty ?? 0) > 1
-        ? { ...p, [id]: { ...p[id], qty: (p[id].qty ?? 1) - 1 } }
-        : (() => {
-            const { [id]: _, ...rest } = p;
-            return rest;
-          })()
-    );
-
-  const remove = (id: number) => {
-    setCart((p) => {
-      const { [id]: _, ...rest } = p;
-      return rest;
-    });
-  };
-  const clear = () => setCart({});
-
-  const itemCount = useMemo(() => Object.values(cart).reduce((a, c) => a + c.qty, 0), [cart]);
-  const total = useMemo(() => Object.values(cart).reduce((a, c) => a + c.qty * c.price, 0), [cart]);
-
-  /* -------------------- Load + Realtime (Socket.IO) -------------------- */
+  // ===== MENUS & realtime =====
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -391,30 +311,104 @@ export default function MenuPage() {
     const onMenuAdded = (payload: any) => upsertMenus(payload);
     const onMenuUpdated = (payload: any) => upsertMenus(payload);
     const onMenuDeleted = (payload: any) => removeMenus(payload);
-    const onConnectError = (err: any) => console.warn("[socket] connect_error", err?.message || err);
-    const onDisconnect = (reason: string) => console.info("[socket] disconnected:", reason);
 
     socket.on("menu", onMenuAll);
     socket.on("foodType", onFoodTypeAll);
     socket.on("menu:add", onMenuAdded);
     socket.on("menu:update", onMenuUpdated);
     socket.on("menu:delete", onMenuDeleted);
-    socket.on("connect_error", onConnectError);
-    socket.on("disconnect", onDisconnect);
 
     return () => {
-      mounted = false;
       socket.off("menu", onMenuAll);
       socket.off("foodType", onFoodTypeAll);
       socket.off("menu:add", onMenuAdded);
       socket.off("menu:update", onMenuUpdated);
       socket.off("menu:delete", onMenuDeleted);
-      socket.off("connect_error", onConnectError);
-      socket.off("disconnect", onDisconnect);
     };
   }, []);
 
-  /* -------------------- Detail open/close -------------------- */
+  // ===== Filters =====
+  const filtered = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    return menus.filter((m) => {
+      const matchQ = !kw || m.menu_name.toLowerCase().includes(kw) || String(m.menu_price).includes(kw);
+      const matchCat = !catId || (m.Typefoods ?? []).some((t) => getTypefoodId(t) === catId);
+      return matchQ && matchCat;
+    });
+  }, [menus, q, catId]);
+
+  // ===== Cart helpers =====
+  const NOTE_MAX = 160;
+  const bump = (item: MenuItem, delta: number) => {
+    setCart((prev) => {
+      const existed = prev[item.menu_id];
+      const nextQty = (existed?.qty || 0) + delta;
+      if (nextQty <= 0) {
+        const { [item.menu_id]: _omit, ...rest } = prev;
+        return rest;
+      }
+      return {
+        ...prev,
+        [item.menu_id]: {
+          id: item.menu_id,
+          name: item.menu_name,
+          price: item.menu_price,
+          qty: Math.min(99, nextQty),
+          img: coverOf(item) ?? undefined,
+          note: existed?.note ?? "",
+        },
+      };
+    });
+  };
+  const setNote = (id: number, val: string) =>
+    setCart((p) => (p[id] ? { ...p, [id]: { ...p[id], note: val.slice(0, NOTE_MAX) } } : p));
+  const incCart = (id: number) => setCart((p) => ({ ...p, [id]: { ...p[id], qty: Math.min(99, (p[id]?.qty ?? 0) + 1) } }));
+  const decCart = (id: number) =>
+    setCart((p) =>
+      (p[id]?.qty ?? 0) > 1 ? { ...p, [id]: { ...p[id], qty: (p[id].qty ?? 1) - 1 } } : (() => {
+        const { [id]: _, ...rest } = p;
+        return rest;
+      })(),
+    );
+  const remove = (id: number) => setCart((p) => {
+    const { [id]: _, ...rest } = p;
+    return rest;
+  });
+  const clear = () => setCart({});
+  const itemCount = useMemo(() => Object.values(cart).reduce((a, c) => a + c.qty, 0), [cart]);
+  const total = useMemo(() => Object.values(cart).reduce((a, c) => a + c.qty * c.price, 0), [cart]);
+
+  // ===== Results URL + ensure booking saved =====
+  const buildResultsUrl = (openCart: boolean = true) => {
+    const bk = readBookingSafe() || booking;
+    const sp = new URLSearchParams();
+    if (bk?.date) sp.set("date", bk.date);
+    if (bk?.time) sp.set("time", bk.time);
+    if (typeof bk?.people === "number" && bk.people > 0) sp.set("people", String(bk.people));
+    if (typeof bk?.duration === "number" && bk.duration > 0) sp.set("duration", String(bk.duration));
+    if (bk?.tableId) sp.set("tableId", String(bk.tableId));
+    if (bk?.tableName) sp.set("tableName", String(bk.tableName));
+    if (openCart) sp.set("openCart", "1");
+    const qs = sp.toString();
+    return `/results${qs ? `?${qs}` : ""}`;
+  };
+
+  const goToResults = () => {
+    // บันทึก snapshot ล่าสุดของ booking ลง LS อีกรอบกันหาย
+    const prev = readBookingSafe() || {};
+    writeBookingSafe({
+      ...prev,
+      tableId: booking?.tableId ?? prev.tableId,
+      tableName: booking?.tableName ?? prev.tableName,
+      date: booking?.date ?? prev.date,
+      time: booking?.time ?? prev.time,
+      people: booking?.people ?? prev.people,
+      // ไม่แตะ reservationId ที่อาจจะเคยมี
+    });
+    router.push(buildResultsUrl(true));
+  };
+
+  // ===== UI =====
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<MenuItem | null>(null);
   const [detailActiveSrc, setDetailActiveSrc] = useState<string | null>(null);
@@ -429,11 +423,12 @@ export default function MenuPage() {
       <TopNav />
 
       <section className="container mx-auto max-w-6xl px-4 py-8">
-        {/* Header */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">เมนูอาหาร</h1>
-            <p className="text-sm text-slate-600">กด + เพื่อเพิ่มเข้าตะกร้า หรือคลิกรูป/ชื่อเมนูเพื่อดูรายละเอียด</p>
+            <p className="text-sm text-slate-600">
+              กด + เพื่อเพิ่มเข้าตะกร้า หรือคลิกรูป/ชื่อเมนูเพื่อดูรายละเอียด
+            </p>
           </div>
 
           <button
@@ -441,47 +436,33 @@ export default function MenuPage() {
             className="cursor-pointer relative inline-flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2 text-white shadow-sm hover:bg-violet-700"
           >
             <ShoppingCart className="h-4 w-4" />
-            <span className="text-sm" suppressHydrationWarning>
-              {ready ? itemCount : 0} รายการ
-            </span>
+            <span className="text-sm" suppressHydrationWarning>{ready ? itemCount : 0} รายการ</span>
             <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs" suppressHydrationWarning>
               {ready ? money(total) : money(0)}
             </span>
           </button>
         </div>
 
-        {/* แถบแจ้งว่ามีโต๊ะที่เลือกไว้ */}
+        {/* แถบแจ้งโต๊ะที่เลือก */}
         {booking?.tableId && (
           <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <div>
               มีการเลือกโต๊ะไว้: <b>{booking.tableId}</b>
-              {booking.date || booking.time ? (
-                <>
-                  {" "}
-                  — {booking.date ?? ""} {booking.time ?? ""}
-                </>
-              ) : null}
+              {booking.tableName ? <> ({booking.tableName})</> : null}
+              {booking.date || booking.time ? <> — {booking.date ?? ""} {booking.time ?? ""}</> : null}
               {typeof booking.people === "number" ? <> · {booking.people} คน</> : null}
             </div>
             <div className="mt-2 flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  router.push(buildResultsUrl(true));
-                }}
-              >
+              <Button variant="outline" size="sm" className="cursor-pointer" onClick={goToResults}>
                 ไปหน้าสรุปการจอง
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
+                className="cursor-pointer"
                 onClick={() => {
-                  try {
-                    localStorage.removeItem(LS_BOOKING_KEY);
-                  } catch {}
+                  clearBooking();
                   setBooking(null);
-                  window.dispatchEvent(new Event("booking:changed"));
                 }}
               >
                 ล้างค่าโต๊ะ
@@ -490,7 +471,6 @@ export default function MenuPage() {
           </div>
         )}
 
-        {/* ค้นหา + หมวด */}
         <div className="mb-4 flex flex-col gap-3">
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเมนูหรือราคา…" className="h-10" />
           {useMemo(() => {
@@ -511,8 +491,8 @@ export default function MenuPage() {
                   key="cat--1"
                   onClick={() => setCatId(null)}
                   className={cn(
-                    "rounded-full border px-3 py-1 text-sm",
-                    catId === null ? "border-violet-600 bg-violet-50 text-violet-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                    "rounded-full border px-3 py-1 text-sm cursor-pointer",
+                    catId === null ? "border-violet-600 bg-violet-50 text-violet-700" : "border-slate-300 text-slate-700 hover:bg-slate-50",
                   )}
                 >
                   ทั้งหมด
@@ -522,8 +502,8 @@ export default function MenuPage() {
                     key={`cat-${t.id}`}
                     onClick={() => setCatId(t.id)}
                     className={cn(
-                      "rounded-full border px-3 py-1 text-sm",
-                      catId === t.id ? "border-violet-600 bg-violet-50 text-violet-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                      "rounded-full border px-3 py-1 text-sm cursor-pointer",
+                      catId === t.id ? "border-violet-600 bg-violet-50 text-violet-700" : "border-slate-300 text-slate-700 hover:bg-slate-50",
                     )}
                   >
                     {t.name}
@@ -534,7 +514,6 @@ export default function MenuPage() {
           }, [foodTypes, catId])}
         </div>
 
-        {/* Grid */}
         <div className="relative w-full rounded-2xl border border-dashed border-violet-300 bg-white/60 p-4 shadow-sm">
           {loading ? (
             <div className="grid min-h-[300px] place-items-center text-slate-500">กำลังโหลดเมนู…</div>
@@ -589,20 +568,37 @@ export default function MenuPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <Button size="icon" variant="secondary" className="h-7 w-7 rounded-full" onClick={() => decCart(ci.id)} aria-label="ลดจำนวน">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-7 w-7 rounded-full cursor-pointer"
+                        onClick={() => decCart(ci.id)}
+                        aria-label="ลดจำนวน"
+                      >
                         <Minus className="h-4 w-4" />
                       </Button>
                       <span className="w-5 text-center text-sm tabular-nums">{ci.qty}</span>
-                      <Button size="icon" variant="secondary" className="h-7 w-7 rounded-full" onClick={() => incCart(ci.id)} aria-label="เพิ่มจำนวน">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-7 w-7 rounded-full cursor-pointer"
+                        onClick={() => incCart(ci.id)}
+                        aria-label="เพิ่มจำนวน"
+                      >
                         <Plus className="h-4 w-4" />
                       </Button>
-                      <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => remove(ci.id)} aria-label="ลบออก">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 cursor-pointer"
+                        onClick={() => remove(ci.id)}
+                        aria-label="ลบออก"
+                      >
                         <Trash2 className="h-4 w-4 text-slate-500" />
                       </Button>
                     </div>
                   </div>
 
-                  {/* โน้ตต่อเมนู */}
                   <div>
                     <textarea
                       value={ci.note ?? ""}
@@ -631,11 +627,11 @@ export default function MenuPage() {
               <Button className="cursor-pointer" variant="ghost" onClick={clear} disabled={Object.values(cart).length === 0}>
                 ล้างตะกร้า
               </Button>
-              {/* เปลี่ยนให้ลิงก์ไปหน้า results พร้อมเปิดส่วนตะกร้า */}
               <Button
                 className="cursor-pointer"
                 onClick={() => {
-                  router.push(buildResultsUrl(true));
+                  setCartOpen(false);
+                  goToResults();
                 }}
                 disabled={Object.values(cart).length === 0}
               >
@@ -681,8 +677,8 @@ export default function MenuPage() {
                             type="button"
                             onClick={() => setDetailActiveSrc(src)}
                             className={cn(
-                              "relative h-16 w-20 shrink-0 overflow-hidden rounded-md border",
-                              active ? "ring-2 ring-violet-500 border-violet-500" : "border-slate-200"
+                              "relative h-16 w-20 shrink-0 overflow-hidden rounded-md border cursor-pointer",
+                              active ? "ring-2 ring-violet-500 border-violet-500" : "border-slate-200",
                             )}
                             aria-label="เปลี่ยนรูปตัวอย่าง"
                           >
@@ -719,14 +715,21 @@ export default function MenuPage() {
                       <Button
                         size="icon"
                         variant="secondary"
-                        className="h-9 w-9 rounded-full"
+                        className="h-9 w-9 rounded-full cursor-pointer"
                         onClick={() => bump(detailItem, -1)}
                         disabled={(cart[detailItem.menu_id]?.qty ?? 0) <= 0}
                       >
                         <Minus className="h-4 w-4" />
                       </Button>
-                      <span className="min-w-6 text-center text-base tabular-nums">{cart[detailItem.menu_id]?.qty ?? 0}</span>
-                      <Button size="icon" variant="secondary" className="h-9 w-9 rounded-full" onClick={() => bump(detailItem, +1)}>
+                      <span className="min-w-6 text-center text-base tabular-nums">
+                        {cart[detailItem.menu_id]?.qty ?? 0}
+                      </span>
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-9 w-9 rounded-full cursor-pointer"
+                        onClick={() => bump(detailItem, +1)}
+                      >
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>

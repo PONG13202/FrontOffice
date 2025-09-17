@@ -11,10 +11,10 @@ import SiteFooter from "@/app/components/SiteFooter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { writeBookingSafe } from "@/lib/bookingStore";
 
 const GRID_SIZE = 80;
 const PADDING = 80;
-const LS_BOOKING_KEY = "booking:v1";
 
 type GridSize = { id: number; rows: number; cols: number };
 interface TableVM {
@@ -67,7 +67,7 @@ function PublicTableCard({ table, onClick }: { table: TableVM; onClick: (t: Tabl
         <div className="flex-1" />
 
         <div className="pt-1">
-          <Button className="h-7 w-full rounded-lg text-[11px] leading-[1] tracking-wide px-2 active:translate-y-px" disabled={disabled}>
+          <Button className="h-7 w-full rounded-lg text-[11px] leading-[1] tracking-wide px-2 active:translate-y-px cursor-pointer" disabled={disabled}>
             จอง
           </Button>
         </div>
@@ -143,22 +143,19 @@ export default function PublicTablePage() {
   const router = useRouter();
   const search = useSearchParams();
 
-  // อ่านพารามิเตอร์จาก Home
   const date = search.get("date") ?? new Date().toISOString().slice(0, 10);
   const time = search.get("time") ?? "";
   const people = toNum(search.get("people"));
-  // const durationMin = toNum(search.get("duration")) || 90;
-const DEFAULT_DURATION_MIN = 60; 
-const start = useMemo(() => (time ? new Date(`${date}T${time}:00`) : null), [date, time]);
-const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_MIN * 60000) : null), [start]);
 
+  const DEFAULT_DURATION_MIN = 60;
+  const start = useMemo(() => (time ? new Date(`${date}T${time}:00`) : null), [date, time]);
+  const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_MIN * 60000) : null), [start]);
 
   const [tables, setTables] = useState<TableVM[]>([]);
   const [grid, setGrid] = useState<GridSize | null>(null);
   const [busy, setBusy] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
 
-  // โหลดโต๊ะ + กริด
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -176,7 +173,6 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
     };
     load();
 
-    // realtime table-only
     if (!socket.connected) socket.connect();
     const refreshTables = async () => {
       try {
@@ -201,7 +197,6 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
     };
   }, []);
 
-  // โหลดการจองของวันนั้น ๆ เพื่อคำนวณโต๊ะที่ชนเวลา
   const fetchBusy = useCallback(async () => {
     if (!start || !end) { setBusy(new Set()); return; }
     try {
@@ -226,7 +221,6 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
 
   useEffect(() => { fetchBusy(); }, [fetchBusy]);
 
-  // realtime reservation → รีเฟรช busy
   useEffect(() => {
     if (!socket.connected) socket.connect();
     const refresh = () => fetchBusy();
@@ -246,7 +240,6 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
     };
   }, [fetchBusy]);
 
-  // ผูก flags ให้โต๊ะตามพารามิเตอร์
   const decorated = useMemo<TableVM[]>(() => {
     return tables.map((t) => {
       const idNum = toNum(t.id);
@@ -264,58 +257,46 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
   const numRows = grid?.rows ?? 10;
   const numCols = grid?.cols ?? 10;
 
-  // คลิกเลือกโต๊ะ → เซฟลง localStorage + เลือกว่าจะไป "เมนู" หรือ "สรุปการจอง"
-// goNext: ตัด duration ออก และไม่ setItem ซ้ำ
-const goNext = async (t: TableVM) => {
-  const draft = {
-    date,
-    time,
-    people: Number(people || t.seats),
-    tableId: String(t.id),
-    savedAt: Date.now(),
+  const goNext = async (t: TableVM) => {
+    writeBookingSafe({
+      date,
+      time,
+      people: Number(people || t.seats),
+      tableId: String(t.id),
+    });
+
+    const query = new URLSearchParams({
+      date,
+      ...(time ? { time } : {}),
+      people: String(Number(people || t.seats)),
+      tableId: String(t.id),
+    }).toString();
+
+    const r = await Swal.fire({
+      icon: "question",
+      title: "เลือกโต๊ะแล้ว",
+      text: "ต้องการไปเลือกอาหารเลยไหม?",
+      showCancelButton: true,
+      confirmButtonText: "ไปเลือกอาหาร",
+      cancelButtonText: "ไปหน้าสรุปการจอง",
+    });
+
+    if (r.isConfirmed) {
+      window.location.href = "/menu";
+    } else {
+      window.location.href = `/results?${query}`;
+    }
   };
-  try {
-    localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(draft));
-    window.dispatchEvent(new Event("booking:changed"));
-    window.dispatchEvent(new Event("cart:changed"));
-  } catch {}
-
-  const query = new URLSearchParams({
-    date: draft.date,
-    ...(draft.time ? { time: draft.time } : {}),
-    people: String(draft.people),
-    tableId: draft.tableId,
-  }).toString();
-
-  const r = await Swal.fire({
-    icon: "question",
-    title: "เลือกโต๊ะแล้ว",
-    text: "ต้องการไปเลือกอาหารเลยไหม?",
-    showCancelButton: true,
-    confirmButtonText: "ไปเลือกอาหาร",
-    cancelButtonText: "ไปหน้าสรุปการจอง",
-  });
-
-  if (r.isConfirmed) {
-    // ใช้ router.push ก็ได้ จะลื่นกว่า
-    window.location.href = "/menu";
-  } else {
-    window.location.href = `/results?${query}`;
-  }
-};
-
 
   return (
     <main className="min-h-screen bg-neutral-50">
       <TopNav />
-
       <section className="container mx-auto max-w-6xl px-4 py-8">
         <div className="mb-4">
           <h1 className="text-2xl font-bold text-slate-900">เลือกโต๊ะนั่ง</h1>
-<p className="text-sm text-slate-600">
-  {time ? `วันที่ ${date} เวลา ${time} — แตะโต๊ะเพื่อจอง` : "ผังหน้าบ้าน (ตาราง 80px) — แตะโต๊ะเพื่อจอง"}
-</p>
-
+          <p className="text-sm text-slate-600">
+            {time ? `วันที่ ${date} เวลา ${time} — แตะโต๊ะเพื่อจอง` : "ผังหน้าบ้าน (ตาราง 80px) — แตะโต๊ะเพื่อจอง"}
+          </p>
         </div>
 
         <div className="relative w-full overflow-auto rounded-2xl border border-dashed border-violet-300 bg-white/60 p-3 shadow-sm">
@@ -332,7 +313,6 @@ const goNext = async (t: TableVM) => {
           * สีเทา/จาง หมายถึง ไม่ว่างช่วงเวลานี้ หรือที่นั่งไม่พอ
         </div>
       </section>
-
       <SiteFooter />
     </main>
   );
