@@ -1,7 +1,17 @@
 // app/lib/bookingStore.ts
 export const LS_BOOKING_KEY = "booking:v2";
+export const LS_CART_KEY = "cart:v1";
 const LS_USER_KEY = "user:v1";
 const BOOKING_TTL_MS = 6 * 60 * 60 * 1000; // 6 ชั่วโมง
+
+export type PaymentRow = {
+  id: number;
+  amount: number;
+  status: "PENDING" | "SUBMITTED" | "PAID" | "EXPIRED";
+  qrDataUrl?: string | null;
+  expiresAt?: string | null;
+  slipImage?: string | null;
+};
 
 export type BookingDraft = {
   date?: string;
@@ -12,6 +22,8 @@ export type BookingDraft = {
   reservationId?: number | null;
   savedAt?: number;
   ownerUserId?: number | null;
+  status?: "PENDING_OTP" | "OTP_VERIFIED" | "AWAITING_PAYMENT" | "CONFIRMED" | "CANCELED" | "EXPIRED";
+  payment?: PaymentRow;
 };
 
 function getCurrentUserId(): number | null {
@@ -37,10 +49,13 @@ function isPastDate(dateISO?: string) {
   }
 }
 
-/** อ่าน booking แบบปลอดภัย (ไม่ลบทิ้งถ้า user ยังไม่พร้อม) */
+/**
+ * อ่าน booking แบบปลอดภัย (ไม่ลบทิ้งถ้า user ยังไม่พร้อม)
+ * หมายเหตุ: ไม่ลบเมื่อพบ reservationId — เราจะให้ตัวเคลียร์เฉพาะกิจเป็นคนลบ
+ */
 export function readBookingSafe(): BookingDraft | null {
   try {
-    // migrate v1 -> v2 (คงเดิมของคุณได้)
+    // migrate v1 -> v2
     const legacy = localStorage.getItem("booking:v1");
     if (legacy && !localStorage.getItem(LS_BOOKING_KEY)) {
       const uid = getCurrentUserId();
@@ -73,20 +88,19 @@ export function readBookingSafe(): BookingDraft | null {
     // เจ้าของตรงกัน → ใช้ได้
     if (owner === current) return bk;
 
-    // กรณี guest → user พึ่งรู้ตัวตน: โอนสิทธิ์ booking ให้ user นี้
+    // guest → user เพิ่งรู้ตัวตน: โอนสิทธิ์ booking ให้ user นี้
     if (owner === null && current !== null) {
       bk = { ...bk, ownerUserId: current, savedAt: Date.now() };
       localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(bk));
       return bk;
     }
 
-    // กรณี user ของ booking เป็นคนจริงอยู่แล้ว แต่ตอนนี้ยัง "ไม่รู้ว่าใคร" (current = null)
-    // → อย่าลบ! คืน null ไปก่อน รอรอบถัดไปที่รู้ user แล้วค่อยตัดสิน
+    // owner มีอยู่แล้ว แต่ current ยัง null → อย่าลบ
     if (owner !== null && current === null) {
-      return null; // เก็บไว้ใน LS เหมือนเดิม
+      return null;
     }
 
-    // ทั้งสองฝั่งเป็นคนละ user ชัดเจน → ลบทิ้ง (ป้องกัน cross-user)
+    // คนละ user → ลบทิ้ง
     localStorage.removeItem(LS_BOOKING_KEY);
     return null;
   } catch {
@@ -118,4 +132,43 @@ export function writeBookingSafe(partial: BookingDraft) {
 export function clearBooking() {
   localStorage.removeItem(LS_BOOKING_KEY);
   window.dispatchEvent(new Event("booking:changed"));
+}
+
+/** ล้าง cart */
+export function clearCart() {
+  localStorage.removeItem(LS_CART_KEY);
+  window.dispatchEvent(new Event("cart:changed"));
+}
+
+/** ล้างทั้ง booking + cart */
+export function clearBookingAndCart() {
+  clearBooking();
+  clearCart();
+}
+
+/**
+ * เคลียร์หลัง commit (เมื่อมี reservationId ใน booking)
+ * คืน true ถ้ามีการเคลียร์
+ */
+// เคลียร์หลัง commit จริง ๆ (เฉพาะเสร็จสมบูรณ์แล้ว)
+export function clearIfCommitted(finalStatuses: string[] = ["CONFIRMED", "CANCELED", "EXPIRED"]): boolean {
+  try {
+    const raw = localStorage.getItem(LS_BOOKING_KEY);
+    if (!raw) return false;
+    const bk: BookingDraft = JSON.parse(raw);
+
+    // ถ้ายังไม่มี reservationId → ยังไม่ commit
+    if (!bk || typeof bk.reservationId !== "number") return false;
+
+    // ถ้ามี status และ status อยู่ใน finalStatuses → เคลียร์
+    if (bk.status && finalStatuses.includes(bk.status)) {
+      clearBookingAndCart();
+      return true;
+    }
+
+    // ถ้าไม่มี status ให้ปล่อยไว้ (เช่น OTP, AWAITING_PAYMENT)
+    return false;
+  } catch {
+    return false;
+  }
 }

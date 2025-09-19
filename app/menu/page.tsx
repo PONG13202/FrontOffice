@@ -5,8 +5,6 @@ import axios from "axios";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { config } from "@/app/config";
-import TopNav from "@/app/components/TopNav";
-import SiteFooter from "@/app/components/SiteFooter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -420,7 +418,7 @@ export default function MenuPage() {
 
   return (
     <main className="min-h-screen bg-neutral-50">
-      <TopNav />
+      
 
       <section className="container mx-auto max-w-6xl px-4 py-8">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -744,7 +742,7 @@ export default function MenuPage() {
         </DialogContent>
       </Dialog>
 
-      <SiteFooter />
+    
     </main>
   );
 }

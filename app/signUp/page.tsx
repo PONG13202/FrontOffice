@@ -179,7 +179,7 @@ export default function SignUp() {
           timer: 1500,
           showConfirmButton: false,
         });
-        router.push("/");
+        router.push("/signIn");
       }
     } catch (err: any) {
       const message = err.response?.data?.message || "ไม่สามารถลงทะเบียนได้";

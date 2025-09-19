@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import TopNav from "../components/TopNav";
 import Recommended from "../components/Recommended";
 import RegisterBanner from "../components/RegisterBanner";
-import SiteFooter from "../components/SiteFooter";
 import axios from "axios";
 import { config } from "../config";
 import Swal from "sweetalert2";
@@ -246,7 +245,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-neutral-100">
-      <TopNav />
+      
 
       <section className="container mx-auto max-w-6xl px-4 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -314,7 +313,7 @@ export default function Home() {
       </section>
 
       <RegisterBanner />
-      <SiteFooter />
+    
     </main>
   );
 }

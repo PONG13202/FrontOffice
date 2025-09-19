@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Prompt } from "next/font/google";
 import "./globals.css";
 import ClientProviders from "./ClientProviders";
+import SiteFooter from "@/app/components/SiteFooter";
+import TopNav from "./components/TopNav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,7 +33,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className="h-full">
       <head>
         <link
           rel="stylesheet"
@@ -42,9 +44,19 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${prompt.variable} antialiased`}
+      
+        className={`${geistSans.variable} ${geistMono.variable} ${prompt.variable} antialiased flex flex-col min-h-screen`}
       >
-        <ClientProviders>{children}</ClientProviders>
+        <ClientProviders>
+          {/* Header */}
+          <TopNav />
+
+          {/* Main content (ดันให้กินพื้นที่ที่เหลือ) */}
+          <main className="flex-grow">{children}</main>
+
+          {/* Footer */}
+          <SiteFooter />
+        </ClientProviders>
       </body>
     </html>
   );

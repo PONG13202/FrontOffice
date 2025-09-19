@@ -1,14 +1,13 @@
 // app/reservations/page.tsx
 "use client";
 
-import React, { useEffect,useCallback, useMemo, useState } from "react";
+import React, { useEffect, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
 import Swal from "sweetalert2";
-
 import TopNav from "../components/TopNav";
-import SiteFooter from "../components/SiteFooter";
+import { clearIfCommitted } from "@/lib/bookingStore";
 import { socket } from "@/app/socket";
 import { config } from "@/app/config";
 
@@ -74,13 +73,6 @@ const within = (now: Date, startISO: string, endISO?: string | null) => {
   return now >= s && now <= e;
 };
 
-const activeResvStatuses: ReservationStatus[] = [
-  "PENDING_OTP",
-  "OTP_VERIFIED",
-  "AWAITING_PAYMENT",
-  "CONFIRMED",
-];
-
 function StatusBadge({
   label,
   tone = "neutral",
@@ -106,10 +98,24 @@ function StatusBadge({
 }
 
 const mapReservationTone = (s: ReservationStatus) =>
-  s === "CONFIRMED" ? "green" : s === "CANCELED" || s === "EXPIRED" ? "red" : s === "AWAITING_PAYMENT" ? "purple" : "amber";
+  s === "CONFIRMED"
+    ? "green"
+    : s === "CANCELED" || s === "EXPIRED"
+    ? "red"
+    : s === "AWAITING_PAYMENT"
+    ? "purple"
+    : "amber";
 
 const mapPaymentTone = (s?: PaymentStatus | null) =>
-  s === "PAID" ? "green" : s === "EXPIRED" ? "red" : s === "CANCELED" ? "zinc" : s === "PENDING" || s === "SUBMITTED" ? "amber" : "neutral";
+  s === "PAID"
+    ? "green"
+    : s === "EXPIRED"
+    ? "red"
+    : s === "CANCELED"
+    ? "zinc"
+    : s === "PENDING" || s === "SUBMITTED"
+    ? "amber"
+    : "neutral";
 
 const mapOrderTone = (s?: OrderStatus | null) =>
   s === "CONFIRMED" ? "green" : s === "CANCELED" ? "zinc" : s === "PENDING" ? "amber" : "neutral";
@@ -127,7 +133,7 @@ const authHeader = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-// ดึง userId จาก JWT (ฝั่ง client แค่ decode base64 เฉย ๆ)
+// ดึง userId จาก JWT (ฝั่ง client แค่ decode base64 เฉย ๆ) — ยังไม่ได้ใช้แต่เก็บไว้เผื่อ
 const getUserIdFromJWT = (): number | null => {
   try {
     const token = localStorage.getItem("token") || localStorage.getItem("authToken");
@@ -158,67 +164,54 @@ export default function MyReservationsPage() {
     if (payload?.data) setData(payload.data);
     if (payload?.now) setServerNow(new Date(payload.now));
   };
-  const events = [
-  "reservation:created",
-  "reservation:updated",
-  "reservation:confirmed",
-  "reservation:expired",
-  "reservation:canceled",
-  "payment:succeeded",
-] as const;
 
-
-const fetchData = useCallback(async () => {
-  try {
-    setLoading(true);
-    const res = await axios.get(`${config.apiUrl}/my_reservations`, {
-      headers: { ...authHeader() },
-    });
-    applyIncoming(res.data || {});
-  } catch (e: any) {
-    const msg = e?.response?.data?.message || e?.message || "โหลดข้อมูลไม่สำเร็จ";
-    Swal.fire({ icon: "error", title: "ไม่สามารถโหลดรายการได้", text: msg });
-  } finally {
-    setLoading(false);
-  }
-}, []);
-  
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${config.apiUrl}/my_reservations`, {
+        headers: { ...authHeader() },
+      });
+      applyIncoming(res.data || {});
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || "โหลดข้อมูลไม่สำเร็จ";
+      Swal.fire({ icon: "error", title: "ไม่สามารถโหลดรายการได้", text: msg });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // initial fetch + socket realtime
-useEffect(() => {
-  fetchData();
+  useEffect(() => {
+    fetchData();
+    try { clearIfCommitted(); } catch {}
 
-  const token = localStorage.getItem("token") || localStorage.getItem("authToken") || undefined;
-  if (!socket.connected) {
-    if (token) (socket as any).auth = { token };
-    socket.connect();
-  }
+    const token = localStorage.getItem("token") || localStorage.getItem("authToken") || undefined;
+    if (!socket.connected) {
+      if (token) (socket as any).auth = { token };
+      socket.connect();
+    }
 
-  const onEvent = (payload: any) => {
-    // payload จะมาจาก backend
-    console.log("Reservation event:", payload);
-    fetchData(); // refresh ทันที
-  };
+    const onEvent = (payload: any) => {
+      console.log("Reservation event:", payload);
+      fetchData(); // refresh ทันทีเมื่อมี event
+    };
 
+    socket.on("reservation:created", onEvent);
+    socket.on("reservation:updated", onEvent);
+    socket.on("reservation:confirmed", onEvent);
+    socket.on("reservation:expired", onEvent);
+    socket.on("reservation:canceled", onEvent);
+    socket.on("payment:succeeded", onEvent);
 
-  socket.on("reservation:created", onEvent);
-  socket.on("reservation:updated", onEvent);
-  socket.on("reservation:confirmed", onEvent);
-  socket.on("reservation:expired", onEvent);
-  socket.on("reservation:canceled", onEvent);
-  socket.on("payment:succeeded", onEvent);
-
-  return () => {
-    socket.off("reservation:created", onEvent);
-    socket.off("reservation:updated", onEvent);
-    socket.off("reservation:confirmed", onEvent);
-    socket.off("reservation:expired", onEvent);
-    socket.off("reservation:canceled", onEvent);
-    socket.off("payment:succeeded", onEvent);
-  };
-}, [fetchData]);
-
-
+    return () => {
+      socket.off("reservation:created", onEvent);
+      socket.off("reservation:updated", onEvent);
+      socket.off("reservation:confirmed", onEvent);
+      socket.off("reservation:expired", onEvent);
+      socket.off("reservation:canceled", onEvent);
+      socket.off("payment:succeeded", onEvent);
+    };
+  }, [fetchData]);
 
   useEffect(() => {
     setPage(1);
@@ -248,29 +241,54 @@ useEffect(() => {
   const endIdx = startIdx + pageSize;
   const paginated = filtered.slice(startIdx, endIdx);
 
-const current = useMemo(() => {
-  return data
-    .filter((r) => r.order && r.order.status !== "CONFIRMED") // มี order + ยังไม่ confirm
-    .sort((a, b) => new Date(b.dateStart).getTime() - new Date(a.dateStart).getTime())[0] || null;
-}, [data]);
-// ถ้าอยากให้ fallback เป็น order ล่าสุด (ไม่ว่าจะ confirm แล้วหรือยัง) คุณเพิ่ม logic แบบนี้:
+  // ===== เลือก "รายการล่าสุด" ตาม enum ชัดเจน =====
 
-// const current = useMemo(() => {
-//   const pending = data
-//     .filter((r) => r.order && r.order.status !== "CONFIRMED")
-//     .sort((a, b) => new Date(b.dateStart).getTime() - new Date(a.dateStart).getTime())[0];
-//   if (pending) return pending;
+  // ให้คะแนนความ "ใหม่" (เพื่อจัดอันดับ)
+  const stamp = (r: MyReservation) => {
+    const t = new Date(r.dateStart).getTime();
+    const oid = r.order?.id ?? 0;
+    const pid = r.payment?.id ?? 0;
+    return Math.max(t, oid, pid);
+  };
 
-//   // fallback = order ล่าสุดทั้งหมด
-//   return data
-//     .filter((r) => r.order)
-//     .sort((a, b) => new Date(b.dateStart).getTime() - new Date(a.dateStart).getTime())[0] || null;
-// }, [data]);
+  /**
+   * รอแอดมินอนุมัติ:
+   * - ลูกค้า "ส่งสลิปแล้ว" => payment.status === "SUBMITTED"
+   * - งานยังไม่จบ => reservation.status ไม่ใช่ EXPIRED/CANCELED
+   * *ไม่* นับเคสที่แค่ ORDER.PENDING แต่ยังไม่ได้ส่งสลิป
+   */
+  const isAwaitingAdmin = useCallback((r: MyReservation) => {
+    if (!r.payment) return false;
+    if (r.status === "EXPIRED" || r.status === "CANCELED") return false;
+    return r.payment.status === "SUBMITTED";
+  }, []);
 
+  // ออเดอร์ล่าสุดที่สั่งมา (ต้องมี order)
+  const latestOrder = useMemo(() => {
+    const arr = data.filter((r) => r.order);
+    arr.sort((a, b) => {
+      const s = stamp(b) - stamp(a);
+      return s !== 0 ? s : b.id - a.id; // กันกรณีค่าเท่ากัน
+    });
+    return arr[0] ?? null;
+  }, [data]);
+
+  // ออเดอร์ที่รอแอดมินอนุมัติ "ล่าสุด"
+  const latestAwaiting = useMemo(() => {
+    const arr = data.filter(isAwaitingAdmin);
+    arr.sort((a, b) => {
+      const s = stamp(b) - stamp(a);
+      return s !== 0 ? s : b.id - a.id;
+    });
+    return arr[0] ?? null;
+  }, [data, isAwaitingAdmin]);
+
+  // อัปโหลดสลิปได้เมื่อยังไม่ได้ส่งสลิป/หมดเวลาแล้ว (และยังไม่มีรูป)
   const canUploadSlip = (r: MyReservation) => {
     const p = r.payment;
     if (!p) return false;
-    return (p.status === "PENDING" || p.status === "SUBMITTED" || p.status === "EXPIRED") && !p.slipImage;
+    // ถ้า SUBMITTED มักจะมี slipImage แล้ว จึงไม่ผ่านเงื่อนไข !p.slipImage
+    return (p.status === "PENDING" || p.status === "EXPIRED") && !p.slipImage;
   };
 
   const handleUploadSlip = async (paymentId: number, file: File) => {
@@ -282,7 +300,6 @@ const current = useMemo(() => {
         headers: { ...authHeader() },
       });
       Swal.fire({ icon: "success", title: "อัปโหลดสลิปสำเร็จ", timer: 1300, showConfirmButton: false });
-      // รอ socket push หรือ fallback refetch
       await fetchData();
     } catch (e: any) {
       const msg = e?.response?.data?.message || e?.message || "อัปโหลดสลิปไม่สำเร็จ";
@@ -303,9 +320,128 @@ const current = useMemo(() => {
     return arr;
   }, [currentPage, pages]);
 
+  // ===== การ์ดสรุป (ใช้เฉพาะส่วนบน)
+  const OrderSummaryCard = ({ title, r }: { title: string; r: MyReservation }) => {
+    return (
+      <div className="mb-5 rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-base font-medium">{title}</h3>
+          <StatusBadge label={r.status} tone={mapReservationTone(r.status)} />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* กล่องข้อมูลจอง + รายการอาหาร */}
+          <div className="rounded-xl border p-4">
+            <div className="mb-2 font-medium">
+              โต๊ะ: {r.tableLabel || "-"} • {fmtDateTime(r.dateStart)}
+            </div>
+            <div className="text-sm text-slate-600">
+              คน: {r.people ?? 0}
+              {r.dateEnd ? ` • ถึง ${fmtDateTime(r.dateEnd)}` : ""}
+            </div>
+
+            {r.order?.items?.length ? (
+              <div className="mt-3">
+                <div className="mb-2 text-sm font-medium">รายการอาหาร</div>
+                <ul className="grid gap-2 sm:grid-cols-2">
+                  {r.order.items.map((it) => {
+                    const src = fileUrl(it.image) || "/placeholder.png";
+                    return (
+                      <li key={it.id} className="flex items-center gap-3 rounded-lg border p-2">
+                        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-white">
+                          <Image
+                            src={src}
+                            alt={it.name}
+                            fill
+                            sizes="56px"
+                            className="object-cover"
+                            unoptimized
+                          />
+                        </div>
+                        <div className="min-w-0 text-sm">
+                          <div className="truncate font-medium">{it.name}</div>
+                          <div className="text-slate-600">
+                            × {it.qty} • {(Number(it.price) * Number(it.qty)).toLocaleString()} ฿
+                          </div>
+                          {it.note ? <div className="text-xs text-slate-500">โน้ต: {it.note}</div> : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-slate-500">ไม่มีรายการอาหาร (อาจเป็นการมัดจำโต๊ะ)</div>
+            )}
+          </div>
+
+          {/* กล่องสถานะบิล/ชำระเงิน + สลิป */}
+          <div className="rounded-xl border p-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-slate-600">สถานะบิล</div>
+                <StatusBadge label={r.order?.status ?? "-"} tone={mapOrderTone(r.order?.status ?? null)} />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-slate-600">สถานะชำระเงิน</div>
+                <StatusBadge label={r.payment?.status ?? "-"} tone={mapPaymentTone(r.payment?.status ?? null)} />
+              </div>
+              {r.payment?.amount ? (
+                <div className="text-sm">
+                  ยอดชำระ: <span className="font-medium">{r.payment.amount.toLocaleString()} ฿</span>
+                  {r.payment.expiresAt ? (
+                    <span className="text-slate-500"> • หมดเวลา {fmtDateTime(r.payment.expiresAt)}</span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            {/* อนุญาตอัปโหลดสลิปเฉพาะออเดอร์ที่ยังไม่ได้ส่งสลิป */}
+            {r.payment && canUploadSlip(r) ? (
+              <div className="mt-3">
+                <label className="text-sm text-slate-600">อัปโหลดสลิป:</label>
+                <div className="mt-1">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={uploading === r.payment.id}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleUploadSlip(r.payment!.id, f);
+                    }}
+                    className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-800"
+                  />
+                  {uploading === r.payment.id ? (
+                    <div className="mt-1 text-xs text-slate-500">กำลังอัปโหลด...</div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {r.payment?.slipImage ? (
+              <div className="mt-3">
+                <div className="mb-1 text-sm text-slate-600">สลิปที่อัปโหลด:</div>
+                <div className="relative h-40 w-full overflow-hidden rounded-lg border bg-white">
+                  <Image
+                    src={fileUrl(r.payment.slipImage) || "/placeholder.png"}
+                    alt="Slip"
+                    fill
+                    sizes="(max-width: 768px) 100vw, 50vw"
+                    className="object-contain"
+                    unoptimized
+                  />
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <main className="min-h-screen bg-neutral-50">
-      <TopNav />
+      
 
       <section className="mx-auto max-w-6xl px-4 py-8 space-y-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -313,7 +449,7 @@ const current = useMemo(() => {
             ประวัติการจองของฉัน
           </h1>
 
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
             <div className="inline-flex rounded-lg border bg-white p-1">
               {(["all", "upcoming", "past"] as const).map((k) => (
                 <button
@@ -352,128 +488,26 @@ const current = useMemo(() => {
           </div>
         </div>
 
-        {/* สถานะการสั่งขณะนี้ */}
+        {/* ===== ส่วนบน: ออเดอร์ล่าสุด & รออนุมัติล่าสุด ===== */}
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h2 className="mb-3 text-lg font-medium">สถานะการสั่งขณะนี้</h2>
-          {!current ? (
-            <p className="text-sm text-slate-600">ยังไม่มีการจองที่กำลังดำเนินการหรือใกล้ถึง</p>
+          <h2 className="mb-3 text-lg font-medium">ออเดอร์ล่าสุด & รออนุมัติล่าสุด</h2>
+
+          {!latestOrder && !latestAwaiting ? (
+            <p className="text-sm text-slate-600">ยังไม่มีออเดอร์</p>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* กล่องข้อมูลจอง */}
-              <div className="rounded-xl border p-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="font-medium">
-                    โต๊ะ: {current.tableLabel || "-"} • {fmtDateTime(current.dateStart)}
-                  </div>
-                  <StatusBadge label={current.status} tone={mapReservationTone(current.status)} />
-                </div>
-                <div className="text-sm text-slate-600">
-                  คน: {current.people ?? 0}
-                  {current.dateEnd ? ` • ถึง ${fmtDateTime(current.dateEnd)}` : ""}
-                </div>
+            <>
+              {latestAwaiting ? (
+                <OrderSummaryCard title="ออเดอร์ที่รอแอดมินอนุมัติล่าสุด" r={latestAwaiting} />
+              ) : null}
 
-                {/* รายการอาหาร (พร้อมรูป) */}
-                {current.order?.items?.length ? (
-                  <div className="mt-3">
-                    <div className="mb-2 text-sm font-medium">รายการอาหาร</div>
-                    <ul className="grid gap-2 sm:grid-cols-2">
-                      {current.order.items.map((it) => {
-                        const src = fileUrl(it.image) || "/placeholder.png";
-                        return (
-                          <li key={it.id} className="flex items-center gap-3 rounded-lg border p-2">
-                            <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-white relative">
-                              <Image
-                                src={src}
-                                alt={it.name}
-                                fill
-                                sizes="56px"
-                                className="object-cover"
-                                unoptimized
-                              />
-                            </div>
-                            <div className="min-w-0 text-sm">
-                              <div className="truncate font-medium">{it.name}</div>
-                              <div className="text-slate-600">
-                                × {it.qty} • {(Number(it.price) * Number(it.qty)).toLocaleString()} ฿
-                              </div>
-                              {it.note ? <div className="text-xs text-slate-500">โน้ต: {it.note}</div> : null}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                ) : (
-                  <div className="mt-3 text-sm text-slate-500">ไม่มีรายการอาหาร (อาจเป็นการมัดจำโต๊ะ)</div>
-                )}
-              </div>
-
-              {/* กล่องสถานะบิล/ชำระเงิน + อัปโหลด/แสดงสลิป */}
-              <div className="rounded-xl border p-4">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-600">สถานะบิล</div>
-                    <StatusBadge label={current.order?.status ?? "-"} tone={mapOrderTone(current.order?.status ?? null)} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-600">สถานะชำระเงิน</div>
-                    <StatusBadge label={current.payment?.status ?? "-"} tone={mapPaymentTone(current.payment?.status ?? null)} />
-                  </div>
-                  {current.payment?.amount ? (
-                    <div className="text-sm">
-                      ยอดชำระ: <span className="font-medium">{current.payment.amount.toLocaleString()} ฿</span>
-                      {current.payment.expiresAt ? (
-                        <span className="text-slate-500"> • หมดเวลา {fmtDateTime(current.payment.expiresAt)}</span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* ไม่แสดง QR */}
-
-                {/* อัปโหลด/แสดงสลิป */}
-                {current.payment && canUploadSlip(current) ? (
-                  <div className="mt-3">
-                    <label className="text-sm text-slate-600">อัปโหลดสลิป:</label>
-                    <div className="mt-1">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        disabled={uploading === current.payment.id}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) handleUploadSlip(current.payment!.id, f);
-                        }}
-                        className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-800"
-                      />
-                      {uploading === current.payment.id ? (
-                        <div className="mt-1 text-xs text-slate-500">กำลังอัปโหลด...</div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-
-                {current.payment?.slipImage ? (
-                  <div className="mt-3">
-                    <div className="text-sm text-slate-600 mb-1">สลิปที่อัปโหลด:</div>
-                    <div className="relative h-40 w-full overflow-hidden rounded-lg border bg-white">
-                      <Image
-                        src={fileUrl(current.payment.slipImage) || "/placeholder.png"}
-                        alt="Slip"
-                        fill
-                        sizes="(max-width: 768px) 100vw, 50vw"
-                        className="object-contain"
-                        unoptimized
-                      />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+              {latestOrder && (!latestAwaiting || latestOrder.id !== latestAwaiting.id) ? (
+                <OrderSummaryCard title="ออเดอร์ล่าสุดที่สั่งมา" r={latestOrder} />
+              ) : null}
+            </>
           )}
         </section>
 
-        {/* รายการทั้งหมด + pagination */}
+        {/* ===== รายการทั้งหมด + pagination (ประวัติ) ===== */}
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-end justify-between">
             <h2 className="text-lg font-medium">รายการการจอง</h2>
@@ -502,7 +536,10 @@ const current = useMemo(() => {
                       <div className="flex items-center gap-2">
                         <StatusBadge label={r.status} tone={mapReservationTone(r.status)} />
                         <StatusBadge label={`ORDER: ${r.order?.status ?? "-"}`} tone={mapOrderTone(r.order?.status ?? null)} />
-                        <StatusBadge label={`PAYMENT: ${r.payment?.status ?? "-"}`} tone={mapPaymentTone(r.payment?.status ?? null)} />
+                        <StatusBadge
+                          label={`PAYMENT: ${r.payment?.status ?? "-"}`}
+                          tone={mapPaymentTone(r.payment?.status ?? null)}
+                        />
                       </div>
                     </div>
 
@@ -521,7 +558,7 @@ const current = useMemo(() => {
                             const src = fileUrl(it.image) || "/placeholder.png";
                             return (
                               <li key={it.id} className="flex items-center gap-3 rounded-lg border p-2">
-                                <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md border bg-white relative">
+                                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border bg-white">
                                   <Image
                                     src={src}
                                     alt={it.name}
@@ -545,7 +582,7 @@ const current = useMemo(() => {
                       </div>
                     ) : null}
 
-                    {/* สลิป/อัปโหลดสลิป */}
+                    {/* สลิป (ประวัติ: แสดงอย่างเดียว ไม่ให้อัปโหลด) */}
                     <div className="mt-3 flex flex-wrap items-center gap-3">
                       {r.payment?.slipImage ? (
                         <Link
@@ -555,25 +592,6 @@ const current = useMemo(() => {
                         >
                           ดูสลิป
                         </Link>
-                      ) : null}
-
-                      {r.payment && canUploadSlip(r) ? (
-                        <label className="text-sm">
-                          <span className="mr-2">อัปโหลดสลิป:</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            disabled={uploading === r.payment.id}
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (f) handleUploadSlip(r.payment!.id, f);
-                            }}
-                            className="inline-block text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-800"
-                          />
-                          {uploading === r.payment.id ? (
-                            <span className="ml-2 text-xs text-slate-500">กำลังอัปโหลด...</span>
-                          ) : null}
-                        </label>
                       ) : null}
                     </div>
                   </div>
@@ -643,7 +661,7 @@ const current = useMemo(() => {
         </section>
       </section>
 
-      <SiteFooter />
+
     </main>
   );
 }

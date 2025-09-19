@@ -264,7 +264,7 @@ export default function TopNav() {
       if (r.isConfirmed) router.push("/table");
       return;
     }
-    router.push("/menu");
+    router.push("/table");
   };
 
   const isStaffOrAdmin = useMemo(() => {

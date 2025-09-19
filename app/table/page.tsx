@@ -6,8 +6,6 @@ import axios from "axios";
 import Swal from "sweetalert2";
 import { config } from "@/app/config";
 import { socket } from "@/app/socket";
-import TopNav from "@/app/components/TopNav";
-import SiteFooter from "@/app/components/SiteFooter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -290,7 +288,7 @@ export default function PublicTablePage() {
 
   return (
     <main className="min-h-screen bg-neutral-50">
-      <TopNav />
+      
       <section className="container mx-auto max-w-6xl px-4 py-8">
         <div className="mb-4">
           <h1 className="text-2xl font-bold text-slate-900">เลือกโต๊ะนั่ง</h1>
@@ -313,7 +311,7 @@ export default function PublicTablePage() {
           * สีเทา/จาง หมายถึง ไม่ว่างช่วงเวลานี้ หรือที่นั่งไม่พอ
         </div>
       </section>
-      <SiteFooter />
+
     </main>
   );
 }

@@ -5,8 +5,6 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import axios from "axios";
 import Swal from "sweetalert2";
-import TopNav from "@/app/components/TopNav";
-import SiteFooter from "@/app/components/SiteFooter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -26,24 +24,55 @@ import {
   Clock,
   Users,
 } from "lucide-react";
-import { readBookingSafe, writeBookingSafe, clearBooking } from "@/lib/bookingStore";
+import { readBookingSafe, writeBookingSafe, type PaymentRow, LS_CART_KEY } from "@/lib/bookingStore";
 
-/* ============== Keys/Types เดิม ============== */
-const LS_CART_KEY = "cart:v1";
+/* ============== Keys/Types ============== */
 const LS_USER_KEY = "user:v1";
 
-export type PaymentRow = {
-  id: number;
-  amount: number;
-  status: "PENDING" | "SUBMITTED" | "PAID" | "EXPIRED";
-  qrDataUrl?: string | null;
-  expiresAt?: string | null;
-  slipImage?: string | null;
-};
 export type CreateResResp = { reservationId: number; depositAmount: number; orderTotal: number; };
 type CartLine = { id: number; name: string; price: number; qty: number; note?: string | null; options?: any; };
-type BookingDraft = { date?: string; time?: string; people?: number; tableId?: string | number; tableName?: string; reservationId?: number; savedAt?: number; };
 type UserInfo = { user_id: number; user_name?: string | null; user_fname?: string | null; user_lname?: string | null; user_email?: string | null; user_phone?: string | null; user_img?: string | null; };
+
+/** สถานะฝั่ง UI ของ Stepper */
+type StatusT = "INIT" | "CREATED" | "OTP_SENT" | "CONFIRMED" | "AWAITING_PAYMENT";
+/** สถานะที่เราเก็บใน bookingStore (ตามฝั่ง backend) */
+type BackendStatus = "PENDING_OTP" | "OTP_VERIFIED" | "AWAITING_PAYMENT" | "CONFIRMED" | "CANCELED" | "EXPIRED";
+function formatThaiDate(dateStr: string) {
+  if (!dateStr) return "-";
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("th-TH", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function formatThaiTime(timeStr: string) {
+  if (!timeStr) return "-";
+  const [h, m] = timeStr.split(":").map(Number);
+  const d = new Date();
+  d.setHours(h, m);
+  return d.toLocaleTimeString("th-TH", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+
+function backendToUiStatus(s?: BackendStatus): StatusT | "INIT" {
+  switch (s) {
+    case "PENDING_OTP":
+      return "CREATED";
+    case "OTP_VERIFIED":
+      return "AWAITING_PAYMENT";
+    case "AWAITING_PAYMENT":
+      return "AWAITING_PAYMENT";
+    case "CONFIRMED":
+      return "CONFIRMED";
+    default:
+      return "INIT";
+  }
+}
 
 function authHeader() {
   if (typeof window === "undefined") return {} as Record<string, string>;
@@ -79,7 +108,6 @@ const inputClass =
 /* ============== Stepper helpers ============== */
 const STEP_KEYS = ["DETAILS","REVIEW","CREATED","OTP_SENT","AWAITING_PAYMENT","CONFIRMED"] as const;
 type StepKey = typeof STEP_KEYS[number];
-type StatusT = "INIT" | "CREATED" | "OTP_SENT" | "CONFIRMED" | "AWAITING_PAYMENT";
 function statusToStep(status: StatusT): StepKey {
   switch (status) {
     case "INIT": return "REVIEW";
@@ -103,7 +131,7 @@ export default function ResultsStepperPage() {
   const qDate = q.get("date") || "";
   const qTime = q.get("time") || "";
   const qPeople = parseInt(q.get("people") || "0", 10);
-  const tableId = q.get("tableId");
+  const tableIdFromUrl = q.get("tableId");
   const qTableName = q.get("tableName") || "";
   const openCart = q.get("openCart") === "1";
 
@@ -114,6 +142,7 @@ export default function ResultsStepperPage() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
+  // ---------- hydrate ผู้ใช้ ----------
   useEffect(() => {
     let ignore = false;
     const readUserFromLS = () => {
@@ -148,6 +177,7 @@ export default function ResultsStepperPage() {
     };
   }, []);
 
+  // default date วันนี้
   useEffect(() => {
     if (!date) {
       try {
@@ -158,14 +188,63 @@ export default function ResultsStepperPage() {
     }
   }, [date]);
 
+  // ---------- hydrate จาก bookingStore ----------
   const [tableName, setTableName] = useState<string>(qTableName || "");
+  const [status, setStatus] = useState<StatusT>("INIT");
+  const [reservationId, setReservationId] = useState<number | null>(null);
+
+useEffect(() => {
+  try {
+    const bk = readBookingSafe();
+    console.log("DEBUG booking draft:", bk);
+    if (!bk) return;
+
+    if (!qDate && bk.date) setDate(bk.date);
+    if (!qTime && bk.time) setTime(bk.time || "");
+    if ((!qPeople || qPeople <= 0) && typeof bk.people === "number") setPeople(bk.people);
+    if (!tableName && bk.tableName) setTableName(bk.tableName);
+
+    if (typeof bk.reservationId === "number") setReservationId(bk.reservationId);
+
+    // 🔥 restore payment ด้วย
+    if (bk.payment) setPayment(bk.payment as PaymentRow);
+
+    const restored = backendToUiStatus(bk.status as BackendStatus | undefined);
+    if (restored !== "INIT") setStatus(restored as StatusT);
+  } catch {}
+}, []);
+
+
+  // ถ้ามี reservationId แล้ว ลองรีโหลดสถานะล่าสุด
+  // useEffect(() => {
+  //   (async () => {
+  //     try {
+  //       if (!reservationId) return;
+  //       const { data } = await axios.get(`${config.apiUrl}/reservations/${reservationId}`, {
+  //         headers: { ...authHeader(), "Cache-Control": "no-store" },
+  //       }).catch(() => ({ data: null as any }));
+  //       if (!data) return;
+  //       if (data.status) {
+  //         const s = backendToUiStatus(data.status as BackendStatus);
+  //         if (s !== "INIT") setStatus(s as StatusT);
+  //       }
+  //       if (data.payment) {
+  //         setPayment(data.payment as PaymentRow);
+  //       }
+  //     } catch {}
+  //   })();
+  // }, [reservationId]);
+
+  // ---------- ดึงชื่อโต๊ะ ----------
   const persistTableNameToBooking = (name: string) => {
-    if (!(tableId || q.get("tableId")) || !name) return;
+    const urlTid = tableIdFromUrl || "";
+    const tid = urlTid || (readBookingSafe()?.tableId as any) || "";
+    if (!tid || !name) return;
     try {
       const prev = readBookingSafe() || {};
       writeBookingSafe({
         ...prev,
-        tableId: prev?.tableId ?? (tableId || q.get("tableId") || ""),
+        tableId: prev?.tableId ?? (tid || ""),
         tableName: name,
       });
     } catch {}
@@ -179,7 +258,7 @@ export default function ResultsStepperPage() {
     } catch {}
 
     const fetchName = async () => {
-      const tid = tableId;
+      const tid = tableIdFromUrl || (readBookingSafe()?.tableId as any);
       if (!tid) return;
       try {
         const one = await axios.get(`${config.apiUrl}/tables/${tid}`, { headers: { "Cache-Control": "no-store" } }).then((r) => r.data).catch(() => null);
@@ -196,24 +275,23 @@ export default function ResultsStepperPage() {
     };
     fetchName();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableId, qTableName]);
+  }, [tableIdFromUrl, qTableName]);
 
   const itemsRef = useRef<HTMLDivElement | null>(null);
 
-  const [creating, setCreating] = useState(false);
-  const [reservationId, setReservationId] = useState<number | null>(null);
   const [otp, setOtp] = useState("");
   const [sendingOtp, setSendingOtp] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [status, setStatus] = useState<StatusT>("INIT");
 
   const [payment, setPayment] = useState<PaymentRow | null>(null);
   const [expiresIn, setExpiresIn] = useState<number>(0);
   const [slip, setSlip] = useState<File | null>(null);
   const [uploadingSlip, setUploadingSlip] = useState(false);
   const [polling, setPolling] = useState<boolean>(false);
+  const [creating, setCreating] = useState(false);
 
+  // ต้องล็อกอิน + ต้องมี tableId
   useEffect(() => {
     const token = localStorage.getItem("token") || localStorage.getItem("authToken");
     if (!token) {
@@ -230,13 +308,11 @@ export default function ResultsStepperPage() {
         }
       });
     }
-    if (!tableId) {
-      const bk = readBookingSafe();
-      if (!bk?.tableId) {
-        Swal.fire({ icon: "warning", title: "ไม่พบโต๊ะที่เลือก", text: "กรุณาเลือกโต๊ะใหม่อีกครั้ง" }).then(() => router.replace("/table"));
-      }
+    const effectiveTid = tableIdFromUrl || (readBookingSafe()?.tableId as any);
+    if (!effectiveTid) {
+      Swal.fire({ icon: "warning", title: "ไม่พบโต๊ะที่เลือก", text: "กรุณาเลือกโต๊ะใหม่อีกครั้ง" }).then(() => router.replace("/table"));
     }
-  }, [q, router, tableId]);
+  }, [q, router, tableIdFromUrl]);
 
   // ---------- โหลดตะกร้า ----------
   const [items, setItems] = useState<CartLine[]>([]);
@@ -282,6 +358,7 @@ export default function ResultsStepperPage() {
     return { itemsTotal, deposit, grand: itemsTotal > 0 ? itemsTotal : deposit };
   }, [items]);
 
+  // ---------- บันทึกดราฟต์ ----------
   const saveDraft = () => {
     try {
       const prev = readBookingSafe() || {};
@@ -290,7 +367,7 @@ export default function ResultsStepperPage() {
         date,
         time,
         people,
-        tableId: prev?.tableId ?? tableId ?? "",
+        tableId: prev?.tableId ?? (tableIdFromUrl ?? ""),
         tableName: tableName || prev?.tableName,
         reservationId,
       });
@@ -300,27 +377,32 @@ export default function ResultsStepperPage() {
     }
   };
 
+  // ---------- สร้างใบจอง ----------
   const createReservation = async () => {
-    if (!tableId) return Swal.fire({ icon: "error", title: "ไม่พบรหัสโต๊ะ" });
+    const effectiveTid = Number(tableIdFromUrl ?? (readBookingSafe()?.tableId as any) ?? 0);
+    if (!effectiveTid) return Swal.fire({ icon: "error", title: "ไม่พบรหัสโต๊ะ" });
     setCreating(true);
     try {
-      const body: any = { tableId: Number(tableId), date, time, people };
+      const body: any = { tableId: effectiveTid, date, time, people };
       if (items.length > 0) body.items = items;
 
       const { data } = await axios.post<CreateResResp>(`${config.apiUrl}/reservations`, body, {
         headers: { ...authHeader(), "Content-Type": "application/json" },
       });
+
       setReservationId(data.reservationId);
       setStatus("CREATED");
 
+      // เก็บ progress
       try {
         const prev = readBookingSafe() || {};
         writeBookingSafe({
           ...prev,
           date, time, people,
-          tableId: tableId || prev?.tableId || "",
+          tableId: prev?.tableId ?? effectiveTid,
           tableName: tableName || prev?.tableName || "",
           reservationId: data.reservationId,
+          status: "PENDING_OTP",
         });
         window.dispatchEvent(new Event("cart:changed"));
       } catch {}
@@ -333,6 +415,7 @@ export default function ResultsStepperPage() {
     }
   };
 
+  // ---------- ขอ OTP ----------
   const requestOtp = async () => {
     if (!reservationId) return;
     setSendingOtp(true);
@@ -341,7 +424,23 @@ export default function ResultsStepperPage() {
         `${config.apiUrl}/reservations/${reservationId}/request-otp`, {}, { headers: { ...authHeader() } }
       );
       setPreviewUrl(data?.previewUrl ?? null);
+      if (data?.payment) setPayment(data.payment);
+      console.log("DEBUG payment:", data.payment);
       setStatus("OTP_SENT");
+
+      // เก็บ progress (ต้องพก tableId/tableName)
+      try {
+        const prev = readBookingSafe() || {};
+        writeBookingSafe({
+          ...prev,
+          reservationId,
+          status: "PENDING_OTP",
+          payment: data.payment,
+          tableId: prev?.tableId ?? (tableIdFromUrl ?? ""),
+          tableName: prev?.tableName ?? (tableName || ""),
+        });
+      } catch {}
+
       Swal.fire({ icon: "success", title: "ส่ง OTP แล้ว", text: "กรุณาตรวจสอบอีเมลของคุณ", timer: 1500, showConfirmButton: false });
     } catch (e: any) {
       showAxiosError(e, "ขอ OTP ไม่สำเร็จ");
@@ -350,6 +449,7 @@ export default function ResultsStepperPage() {
     }
   };
 
+  // ---------- ยืนยัน OTP ----------
   const verifyOtp = async () => {
     if (!reservationId || !otp) return;
     setVerifying(true);
@@ -357,14 +457,37 @@ export default function ResultsStepperPage() {
       const { data } = await axios.post(
         `${config.apiUrl}/reservations/${reservationId}/verify-otp`, { code: otp }, { headers: { ...authHeader() } }
       );
+
       if (data?.status === "CONFIRMED") {
         setStatus("CONFIRMED");
+        try {
+          const prev = readBookingSafe() || {};
+          writeBookingSafe({
+            ...prev,
+            reservationId,
+            status: "CONFIRMED",
+            tableId: prev?.tableId ?? (tableIdFromUrl ?? ""),
+            tableName: prev?.tableName ?? (tableName || ""),
+          });
+        } catch {}
         Swal.fire({ icon: "success", title: "ยืนยันการจองแล้ว", timer: 1500, showConfirmButton: false });
         return;
       }
+
       if (data?.status === "AWAITING_PAYMENT") {
         setPayment(data.payment as PaymentRow);
         setStatus("AWAITING_PAYMENT");
+        try {
+          const prev = readBookingSafe() || {};
+          writeBookingSafe({
+            ...prev,
+            reservationId,
+            status: "AWAITING_PAYMENT",
+            payment: data.payment,
+            tableId: prev?.tableId ?? (tableIdFromUrl ?? ""),
+            tableName: prev?.tableName ?? (tableName || ""),
+          });
+        } catch {}
         Swal.fire({ icon: "info", title: "กรุณาชำระเงิน", text: "สแกน QR เพื่อชำระ หรืออัปโหลดสลิป", timer: 1500, showConfirmButton: false });
       }
     } catch (e: any) {
@@ -396,37 +519,30 @@ export default function ResultsStepperPage() {
         setPayment((prev) => ({ ...(prev as any), ...data }));
         if (data.status === "PAID") {
           setStatus("CONFIRMED");
+          try {
+            const prev = readBookingSafe() || {};
+            writeBookingSafe({
+              ...prev,
+              reservationId,
+              status: "CONFIRMED",
+              tableId: prev?.tableId ?? (tableIdFromUrl ?? ""),
+              tableName: prev?.tableName ?? (tableName || ""),
+            });
+          } catch {}
           Swal.fire({ icon: "success", title: "ชำระเงินสำเร็จ", timer: 1500, showConfirmButton: false });
         }
       } catch {}
     }, 4000);
     return () => { clearInterval(t); setPolling(false); };
-  }, [status, payment?.id]);
+  }, [status, payment?.id, reservationId, tableIdFromUrl, tableName]);
 
-  const uploadSlip = async () => {
-    if (!payment?.id || !slip) return;
-    setUploadingSlip(true);
-    try {
-      const fd = new FormData();
-      fd.append("slip", slip);
-      const { data } = await axios.post(`${config.apiUrl}/payment/${payment.id}/slip`, fd, { headers: { ...authHeader() } });
-      setPayment((prev) => ({ ...(prev as any), ...data.payment }));
-      Swal.fire({ icon: "success", title: "ส่งสลิปแล้ว", text: "รอแอดมินตรวจสอบ", timer: 1500, showConfirmButton: false });
-    } catch (e: any) {
-      showAxiosError(e, "อัปโหลดสลิปไม่สำเร็จ");
-    } finally {
-      setUploadingSlip(false);
-    }
-  };
-
+  // เมื่อจบ (CONFIRMED) ให้เคลียร์ตะกร้า
   useEffect(() => {
     if (status === "CONFIRMED") {
       try {
         localStorage.removeItem(LS_CART_KEY);
         window.dispatchEvent(new Event("cart:changed"));
         window.dispatchEvent(new Event("booking:changed"));
-        localStorage.removeItem(LS_CART_KEY);
-        window.dispatchEvent(new Event("cart:changed"));
       } catch {}
     }
   }, [status]);
@@ -475,7 +591,6 @@ export default function ResultsStepperPage() {
   /* --------------------------- Panels --------------------------- */
   const DetailsPanel = (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="space-y-6">
-      {/* ข้อมูลลูกค้า + ไอคอนในช่อง */}
       <AccentCard colors="from-indigo-300 via-sky-300 to-cyan-300">
         <div className="p-5 space-y-3">
           <SectionHeading icon={<User2 className="w-4 h-4" />}>ข้อมูลลูกค้า</SectionHeading>
@@ -508,7 +623,6 @@ export default function ResultsStepperPage() {
         </div>
       </AccentCard>
 
-      {/* รายละเอียดจอง + ไอคอนใน input */}
       <AccentCard colors="from-emerald-300 via-teal-300 to-lime-300">
         <div className="p-5 space-y-4">
           <SectionHeading icon={<CalendarClock className="w-4 h-4" />}>รายละเอียดการจอง</SectionHeading>
@@ -551,10 +665,10 @@ export default function ResultsStepperPage() {
         <div className="p-5 space-y-3">
           <SectionHeading icon={<ClipboardList className="w-4 h-4" />}>ตรวจสอบข้อมูล</SectionHeading>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-            <div className="rounded-md bg-slate-50 border p-3"><div className="text-slate-500">วันที่</div><div className="font-semibold">{date}</div></div>
-            <div className="rounded-md bg-slate-50 border p-3"><div className="text-slate-500">เวลา</div><div className="font-semibold">{time || "-"}</div></div>
+            <div className="rounded-md bg-slate-50 border p-3"><div className="text-slate-500">วันที่</div><div className="font-semibold">{formatThaiDate(date)}</div></div>
+            <div className="rounded-md bg-slate-50 border p-3"><div className="text-slate-500">เวลา</div><div className="font-semibold">{formatThaiTime(time)}</div></div>
             <div className="rounded-md bg-slate-50 border p-3"><div className="text-slate-500">จำนวนคน</div><div className="font-semibold">{people || "-"}</div></div>
-            <div className="rounded-md bg-slate-50 border p-3 col-span-2 sm:col-span-3"><div className="text-slate-500">โต๊ะ</div><div className="font-semibold">{tableName || tableId || "-"}</div></div>
+            <div className="rounded-md bg-slate-50 border p-3 col-span-2 sm:col-span-3"><div className="text-slate-500">โต๊ะ</div><div className="font-semibold">{tableName || tableIdFromUrl || readBookingSafe()?.tableId || "-"}</div></div>
           </div>
           {items.length > 0 && (
             <div className="pt-2" ref={itemsRef}>
@@ -594,7 +708,7 @@ export default function ResultsStepperPage() {
         <div className="p-5 space-y-3">
           <SectionHeading icon={<FilePlus2 className="w-4 h-4" />}>ส่ง OTP</SectionHeading>
           <p className="text-sm text-slate-600">เราจะส่งรหัส OTP ไปยังอีเมลในระบบของคุณ เพื่อยืนยันการจอง</p>
-          <Button onClick={requestOtp} disabled={sendingOtp} className="w-full cursor-pointer">{sendingOtp ? "กำลังส่ง..." : "ส่ง OTP"}</Button>
+          <Button onClick={requestOtp} disabled={sendingOtp || !reservationId} className="w-full cursor-pointer">{sendingOtp ? "กำลังส่ง..." : "ส่ง OTP"}</Button>
         </div>
       </AccentCard>
     </motion.div>
@@ -620,11 +734,17 @@ export default function ResultsStepperPage() {
           <div className="p-5 space-y-4">
             <SectionHeading icon={<Wallet className="w-4 h-4" />}>ชำระเงิน ({money(payment.amount)} บาท)</SectionHeading>
 
-            {/* แสดง QR เฉพาะเมื่อยังไม่หมดอายุและไม่ EXPIRED */}
             {payment.qrDataUrl && expiresIn > 0 && payment.status !== "EXPIRED" ? (
               <>
                 <div className="mx-auto w-60 h-60 border rounded-xl overflow-hidden bg-white shadow">
-                  <Image src={payment.qrDataUrl} alt="PromptPay QR" width={240} height={240} className="w-full h-full object-contain" unoptimized />
+                  <Image
+                    src={fileUrl(payment.qrDataUrl) ?? ""}
+                    alt="PromptPay QR"
+                    width={240}
+                    height={240}
+                    className="w-full h-full object-contain"
+                    unoptimized
+                  />
                 </div>
                 <div className="text-center text-sm text-slate-600">
                   {`QR จะหมดอายุใน ${Math.floor(expiresIn / 60)}:${String(expiresIn % 60).padStart(2, "0")} นาที`}
@@ -640,8 +760,23 @@ export default function ResultsStepperPage() {
                     onClick={async () => {
                       if (!reservationId) return;
                       try {
-                        await axios.post(`${config.apiUrl}/reservations/${reservationId}/request-otp`, {}, { headers: { ...authHeader() } });
+                        const { data } =
+                          await axios.post(`${config.apiUrl}/reservations/${reservationId}/request-otp`, {}, { headers: { ...authHeader() } });
+                        if (data?.payment) setPayment(data.payment);
+                        console.log("DEBUG payment:", data.payment);
                         setStatus("OTP_SENT");
+                        setOtp("");
+                        try {
+                          const prev = readBookingSafe() || {};
+                          writeBookingSafe({
+                            ...prev,
+                            reservationId,
+                            status: "PENDING_OTP",
+                            payment: data.payment,
+                            tableId: prev?.tableId ?? (tableIdFromUrl ?? ""),
+                            tableName: prev?.tableName ?? (tableName || ""),
+                          });
+                        } catch {}
                         setOtp("");
                         Swal.fire({ icon: "success", title: "ส่ง OTP ใหม่แล้ว", timer: 1500, showConfirmButton: false });
                       } catch (e: any) {
@@ -668,7 +803,21 @@ export default function ResultsStepperPage() {
               ) : (
                 <>
                   <input type="file" accept="image/*" onChange={(e) => setSlip(e.target.files?.[0] || null)} disabled={expiresIn <= 0 || uploadingSlip || payment.status === "EXPIRED"} className="text-sm" />
-                  <Button onClick={uploadSlip} disabled={!slip || uploadingSlip || expiresIn <= 0 || payment.status === "EXPIRED"} className="w-full cursor-pointer">
+                  <Button onClick={async () => {
+                    if (!payment?.id || !slip) return;
+                    setUploadingSlip(true);
+                    try {
+                      const fd = new FormData();
+                      fd.append("slip", slip);
+                      const { data } = await axios.post(`${config.apiUrl}/payment/${payment.id}/slip`, fd, { headers: { ...authHeader() } });
+                      setPayment((prev) => ({ ...(prev as any), ...data.payment }));
+                      Swal.fire({ icon: "success", title: "ส่งสลิปแล้ว", text: "รอแอดมินตรวจสอบ", timer: 1500, showConfirmButton: false });
+                    } catch (e: any) {
+                      showAxiosError(e, "อัปโหลดสลิปไม่สำเร็จ");
+                    } finally {
+                      setUploadingSlip(false);
+                    }
+                  }} disabled={!slip || uploadingSlip || expiresIn <= 0 || payment.status === "EXPIRED"} className="w-full cursor-pointer">
                     {uploadingSlip ? "กำลังอัปโหลด..." : "ส่งสลิปชำระเงิน"}
                   </Button>
                   <div className="text-xs text-slate-500">สถานะปัจจุบัน: <b>{payment.status}</b> {polling ? "(กำลังตรวจสอบอัตโนมัติ…)" : ""}</div>
@@ -700,7 +849,7 @@ export default function ResultsStepperPage() {
     <main className="relative min-h-screen bg-neutral-50 overflow-x-hidden">
       <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-24 h-64 bg-gradient-to-b from-indigo-100/70 to-transparent blur-2xl" />
       <div aria-hidden className="pointer-events-none absolute right-[-10%] top-32 h-60 w-60 rounded-full bg-emerald-200/40 blur-3xl" />
-      <TopNav />
+      
 
       <section className="container mx-auto max-w-3xl px-4 py-8 space-y-8">
         <div className="flex items-end justify-between">
@@ -725,7 +874,6 @@ export default function ResultsStepperPage() {
         {activeStepKey === "CONFIRMED" && DonePanel}
       </section>
 
-      <SiteFooter />
     </main>
   );
 }
