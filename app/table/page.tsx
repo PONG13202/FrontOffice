@@ -293,7 +293,7 @@ export default function PublicTablePage() {
         <div className="mb-4">
           <h1 className="text-2xl font-bold text-slate-900">เลือกโต๊ะนั่ง</h1>
           <p className="text-sm text-slate-600">
-            {time ? `วันที่ ${date} เวลา ${time} — แตะโต๊ะเพื่อจอง` : "ผังหน้าบ้าน (ตาราง 80px) — แตะโต๊ะเพื่อจอง"}
+            {time ? `วันที่ ${date} เวลา ${time} — แตะโต๊ะเพื่อจอง` : `วันที่ ${date} — แตะโต๊ะเพื่อจอง`}
           </p>
         </div>
 

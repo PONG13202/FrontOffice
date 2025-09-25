@@ -1,3 +1,4 @@
+// service\app\signIn\page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -141,6 +142,7 @@ export default function LoginPage() {
       const res = await axios.post(`${config.apiUrl}/signin`, form);
       if (res.status === 200) {
         localStorage.setItem("token", res.data.token);
+        window.dispatchEvent(new Event("user:refresh"));
         await Swal.fire({
           icon: "success",
           title: "เข้าสู่ระบบสำเร็จ",
@@ -189,6 +191,7 @@ export default function LoginPage() {
           setOpenModal(true);
         } else {
           localStorage.setItem("token", res.data.token);
+          window.dispatchEvent(new Event("user:refresh"));
           await Swal.fire({
             icon: "success",
             title: "เข้าสู่ระบบด้วย Google สำเร็จ",
@@ -270,6 +273,7 @@ export default function LoginPage() {
 
       localStorage.setItem("token", res.data.token);
       localStorage.removeItem("tempToken");
+      window.dispatchEvent(new Event("user:refresh"));
       await Swal.fire({
         icon: "success",
         title: "เพิ่มข้อมูลสำเร็จ",

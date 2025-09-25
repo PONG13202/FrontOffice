@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import TopNav from "../components/TopNav";
 import Recommended from "../components/Recommended";
 import RegisterBanner from "../components/RegisterBanner";
 import axios from "axios";

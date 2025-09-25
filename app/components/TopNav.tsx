@@ -1,3 +1,4 @@
+// service\app\components\TopNav.tsx
 "use client";
 
 import Link from "next/link";
@@ -80,7 +81,9 @@ export default function TopNav() {
     const onBooking = () => sync();
     const onFocus = () => sync();
     const onPageshow = () => sync();
-    const onVisible = () => { if (document.visibilityState === "visible") sync(); };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
 
     window.addEventListener("storage", onStorage);
     window.addEventListener("cart:changed", onCart as any);
@@ -111,6 +114,7 @@ export default function TopNav() {
           (window as any).__USER__ = null;
         }
         window.dispatchEvent(new CustomEvent("user:updated", { detail: u }));
+        window.dispatchEvent(new Event("user:refresh"));
       } catch {}
     };
 
@@ -120,8 +124,11 @@ export default function TopNav() {
       const roles: Role[] | undefined = u.roles;
       const role: Role =
         u.role ??
-        (roles?.includes("admin") ? "admin" :
-         roles?.includes("staff") ? "staff" : "user");
+        (roles?.includes("admin")
+          ? "admin"
+          : roles?.includes("staff")
+          ? "staff"
+          : "user");
       const ensuredUserName =
         u.user_name ?? (typeof u.user_email === "string" ? u.user_email.split("@")[0] : null);
       return {
@@ -195,10 +202,24 @@ export default function TopNav() {
   }, []);
 
   const displayName =
-    user ? ([user.user_fname, user.user_lname].filter(Boolean).join(" ").trim() || user.user_name || "") : "";
+    user
+      ? ([user.user_fname, user.user_lname].filter(Boolean).join(" ").trim() ||
+          user.user_name ||
+          "")
+      : "";
   const initials = (name: string) =>
-    name.split(" ").filter(Boolean).map((s) => s[0]?.toUpperCase()).slice(0, 2).join("");
-  const imageUrl = (p?: string | null) => (/^https?:\/\//i.test(String(p)) ? String(p) : (p ? `${config.apiUrl}/${String(p).replace(/^\/+/, "")}` : null));
+    name
+      .split(" ")
+      .filter(Boolean)
+      .map((s) => s[0]?.toUpperCase())
+      .slice(0, 2)
+      .join("");
+  const imageUrl = (p?: string | null) =>
+    /^https?:\/\//i.test(String(p))
+      ? String(p)
+      : p
+      ? `${config.apiUrl}/${String(p).replace(/^\/+/, "")}`
+      : null;
 
   const handleSignOut = async () => {
     const res = await Swal.fire({
@@ -217,7 +238,7 @@ export default function TopNav() {
       localStorage.removeItem("tempToken");
       localStorage.removeItem(LS_CART_KEY);
       localStorage.removeItem(LS_BOOKING_KEY); // legacy
-      localStorage.removeItem("booking:v2");   // ใหม่
+      localStorage.removeItem("booking:v2"); // ใหม่
       localStorage.removeItem(LS_USER_KEY);
       clearBooking();
 
@@ -227,13 +248,22 @@ export default function TopNav() {
       } catch {}
 
       setUser(null);
-      await Swal.fire({ icon: "success", title: "ออกจากระบบสำเร็จ", showConfirmButton: false, timer: 1100 });
+      await Swal.fire({
+        icon: "success",
+        title: "ออกจากระบบสำเร็จ",
+        showConfirmButton: false,
+        timer: 1100,
+      });
       router.push("/");
     }
   };
 
   const readBooking = (): BookingDraft | null => {
-    try { return readBookingSafe(); } catch { return null; }
+    try {
+      return readBookingSafe();
+    } catch {
+      return null;
+    }
   };
 
   const buildResultsUrl = (openCart: boolean) => {
@@ -271,9 +301,13 @@ export default function TopNav() {
     if (!user) return false;
     if (user.role === "admin" || user.role === "staff") return true;
     if (user.isAdmin === true || user.isStaff === true) return true;
-    if (Array.isArray(user.roles) && user.roles.some((r) => r === "admin" || r === "staff")) return true;
+    if (Array.isArray(user.roles) && user.roles.some((r) => r === "admin" || r === "staff"))
+      return true;
     return false;
   }, [user]);
+
+  // ✅ helper: ล็อกอินอยู่ไหม (ใช้ร่วมกับ mounted และ loadingUser ป้องกัน hydration mismatch)
+  const isLoggedIn = useMemo(() => !!user, [user]);
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b">
@@ -281,7 +315,7 @@ export default function TopNav() {
         <div className="flex items-center gap-3">
           <button aria-label="menu" className="lg:hidden cursor-pointer">
             <svg width="24" height="24" viewBox="0 0 24 24">
-              <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/>
+              <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
           <Link href="/" className="text-lg font-semibold">
@@ -291,11 +325,37 @@ export default function TopNav() {
         </div>
 
         <ul className="hidden lg:flex items-center gap-6 text-sm">
-          <li><Link href="/" className="text-gray-700 hover:text-indigo-600">Home</Link></li>
-          <li><Link href="/table" className="text-gray-700 hover:text-indigo-600">Table</Link></li>
-          <li><Link href="/menu" className="text-gray-700 hover:text-indigo-600">Menu</Link></li>
-          <li><Link href="/reservations" className="text-gray-700 hover:text-indigo-600">Reservations</Link></li>
-          <li><Link href="/about" className="text-gray-700 hover:text-indigo-600">About</Link></li>
+          <li>
+            <Link href="/" className="text-gray-700 hover:text-indigo-600">
+              Home
+            </Link>
+          </li>
+          <li>
+            <Link href="/table" className="text-gray-700 hover:text-indigo-600">
+              Table
+            </Link>
+          </li>
+          <li>
+            <Link href="/menu" className="text-gray-700 hover:text-indigo-600">
+              Menu
+            </Link>
+          </li>
+
+          {/* 🔒 ซ่อนลิงก์ Reservations ถ้ายังไม่ล็อกอิน */}
+          {mounted && !loadingUser && isLoggedIn && (
+            <li>
+              <Link href="/reservations" className="text-gray-700 hover:text-indigo-600">
+                Reservations
+              </Link>
+            </li>
+          )}
+
+          <li>
+            <Link href="/about" className="text-gray-700 hover:text-indigo-600">
+              About
+            </Link>
+          </li>
+
           {isStaffOrAdmin && (
             <li>
               <Link

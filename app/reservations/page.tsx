@@ -6,10 +6,23 @@ import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
 import Swal from "sweetalert2";
-import TopNav from "../components/TopNav";
 import { clearIfCommitted } from "@/lib/bookingStore";
 import { socket } from "@/app/socket";
 import { config } from "@/app/config";
+
+// 🌀 Motion + Icons
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  RefreshCcw,
+  CalendarClock,
+  CheckCircle2,
+  XCircle,
+  Hourglass,
+  Wallet,
+  ReceiptText,
+  Utensils,
+  ChevronRight,
+} from "lucide-react";
 
 type OrderStatus = "PENDING" | "CONFIRMED" | "CANCELED";
 type PaymentStatus = "PENDING" | "SUBMITTED" | "PAID" | "CANCELED" | "EXPIRED";
@@ -57,28 +70,67 @@ type MyReservation = {
     | null;
 };
 
-// ---------- helpers ----------
+/* ================== Motion variants ================== */
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.25 } },
+};
+
+const fadeIn = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { duration: 0.25 } },
+};
+
+const staggerList = {
+  hidden: { opacity: 1 },
+  show: { opacity: 1, transition: { staggerChildren: 0.06 } },
+};
+
+const hoverLift = { whileHover: { y: -2, scale: 1.01 }, whileTap: { scale: 0.995 } };
+
+/* ================== UI helpers ================== */
+// กรอบไล่สี + Motion
+const AccentWrap = ({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) => (
+  <motion.div
+    variants={fadeIn}
+    initial="hidden"
+    animate="show"
+    className={`rounded-2xl p-[1px] bg-gradient-to-r from-indigo-300 via-purple-300 to-emerald-300 ${className}`}
+  >
+    <div className="rounded-[1rem] border bg-white/95">{children}</div>
+  </motion.div>
+);
+
+// ไทยเต็มระบบ
 const fmtDateTime = (iso?: string | null) => {
   if (!iso) return "-";
   const d = new Date(iso);
-  return new Intl.DateTimeFormat("th-TH", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(d);
+  return new Intl.DateTimeFormat("th-TH", { dateStyle: "medium", timeStyle: "short" }).format(d);
 };
+const money = (n: number) => Number(n || 0).toLocaleString("th-TH");
 
+// ใช้ตัดสิน “ตอนนี้อยู่ในช่วงเวลาจองไหม”
 const within = (now: Date, startISO: string, endISO?: string | null) => {
   const s = new Date(startISO);
   const e = endISO ? new Date(endISO) : new Date(s.getTime() + 30 * 60 * 1000);
   return now >= s && now <= e;
 };
 
+// ป้ายสถานะ + ไอคอน
 function StatusBadge({
   label,
   tone = "neutral",
+  icon,
 }: {
   label: string;
   tone?: "neutral" | "blue" | "amber" | "green" | "red" | "slate" | "purple" | "zinc";
+  icon?: React.ReactNode;
 }) {
   const toneMap: Record<string, string> = {
     neutral: "bg-slate-100 text-slate-700 border-slate-200",
@@ -91,32 +143,16 @@ function StatusBadge({
     zinc: "bg-zinc-100 text-zinc-700 border-zinc-200",
   };
   return (
-    <span className={`px-2 py-1 rounded-full text-xs border ${toneMap[tone]} whitespace-nowrap`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border ${toneMap[tone]} whitespace-nowrap`}>
+      {icon ? <span className="inline-flex">{icon}</span> : null}
       {label}
     </span>
   );
 }
-
 const mapReservationTone = (s: ReservationStatus) =>
-  s === "CONFIRMED"
-    ? "green"
-    : s === "CANCELED" || s === "EXPIRED"
-    ? "red"
-    : s === "AWAITING_PAYMENT"
-    ? "purple"
-    : "amber";
-
+  s === "CONFIRMED" ? "green" : s === "CANCELED" || s === "EXPIRED" ? "red" : s === "AWAITING_PAYMENT" ? "purple" : "amber";
 const mapPaymentTone = (s?: PaymentStatus | null) =>
-  s === "PAID"
-    ? "green"
-    : s === "EXPIRED"
-    ? "red"
-    : s === "CANCELED"
-    ? "zinc"
-    : s === "PENDING" || s === "SUBMITTED"
-    ? "amber"
-    : "neutral";
-
+  s === "PAID" ? "green" : s === "EXPIRED" ? "red" : s === "CANCELED" ? "zinc" : s === "PENDING" || s === "SUBMITTED" ? "amber" : "neutral";
 const mapOrderTone = (s?: OrderStatus | null) =>
   s === "CONFIRMED" ? "green" : s === "CANCELED" ? "zinc" : s === "PENDING" ? "amber" : "neutral";
 
@@ -133,7 +169,7 @@ const authHeader = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-// ดึง userId จาก JWT (ฝั่ง client แค่ decode base64 เฉย ๆ) — ยังไม่ได้ใช้แต่เก็บไว้เผื่อ
+// (เผื่อใช้) ดึง userId จาก JWT
 const getUserIdFromJWT = (): number | null => {
   try {
     const token = localStorage.getItem("token") || localStorage.getItem("authToken");
@@ -147,7 +183,7 @@ const getUserIdFromJWT = (): number | null => {
   }
 };
 
-// ---------- page ----------
+/* ================== Page ================== */
 export default function MyReservationsPage() {
   const [data, setData] = useState<MyReservation[]>([]);
   const [serverNow, setServerNow] = useState<Date | null>(null);
@@ -164,13 +200,23 @@ export default function MyReservationsPage() {
     if (payload?.data) setData(payload.data);
     if (payload?.now) setServerNow(new Date(payload.now));
   };
+  useEffect(() => {
+  const token = localStorage.getItem("token") || localStorage.getItem("authToken");
+  if (!token) {
+    Swal.fire({
+      icon: "info",
+      title: "กรุณาเข้าสู่ระบบก่อน",
+      confirmButtonText: "ไปหน้าเข้าสู่ระบบ",
+    }).then(() => {
+      window.location.href = "/signIn";
+    });
+  }
+}, []);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${config.apiUrl}/my_reservations`, {
-        headers: { ...authHeader() },
-      });
+      const res = await axios.get(`${config.apiUrl}/my_reservations`, { headers: { ...authHeader() } });
       applyIncoming(res.data || {});
     } catch (e: any) {
       const msg = e?.response?.data?.message || e?.message || "โหลดข้อมูลไม่สำเร็จ";
@@ -190,12 +236,9 @@ export default function MyReservationsPage() {
       if (token) (socket as any).auth = { token };
       socket.connect();
     }
+    
 
-    const onEvent = (payload: any) => {
-      console.log("Reservation event:", payload);
-      fetchData(); // refresh ทันทีเมื่อมี event
-    };
-
+    const onEvent = () => fetchData();
     socket.on("reservation:created", onEvent);
     socket.on("reservation:updated", onEvent);
     socket.on("reservation:confirmed", onEvent);
@@ -241,8 +284,6 @@ export default function MyReservationsPage() {
   const endIdx = startIdx + pageSize;
   const paginated = filtered.slice(startIdx, endIdx);
 
-  // ===== เลือก "รายการล่าสุด" ตาม enum ชัดเจน =====
-
   // ให้คะแนนความ "ใหม่" (เพื่อจัดอันดับ)
   const stamp = (r: MyReservation) => {
     const t = new Date(r.dateStart).getTime();
@@ -251,29 +292,22 @@ export default function MyReservationsPage() {
     return Math.max(t, oid, pid);
   };
 
-  /**
-   * รอแอดมินอนุมัติ:
-   * - ลูกค้า "ส่งสลิปแล้ว" => payment.status === "SUBMITTED"
-   * - งานยังไม่จบ => reservation.status ไม่ใช่ EXPIRED/CANCELED
-   * *ไม่* นับเคสที่แค่ ORDER.PENDING แต่ยังไม่ได้ส่งสลิป
-   */
+  // ออเดอร์ที่รอแอดมินอนุมัติ "ล่าสุด"
   const isAwaitingAdmin = useCallback((r: MyReservation) => {
     if (!r.payment) return false;
     if (r.status === "EXPIRED" || r.status === "CANCELED") return false;
     return r.payment.status === "SUBMITTED";
   }, []);
 
-  // ออเดอร์ล่าสุดที่สั่งมา (ต้องมี order)
   const latestOrder = useMemo(() => {
     const arr = data.filter((r) => r.order);
     arr.sort((a, b) => {
       const s = stamp(b) - stamp(a);
-      return s !== 0 ? s : b.id - a.id; // กันกรณีค่าเท่ากัน
+      return s !== 0 ? s : b.id - a.id;
     });
     return arr[0] ?? null;
   }, [data]);
 
-  // ออเดอร์ที่รอแอดมินอนุมัติ "ล่าสุด"
   const latestAwaiting = useMemo(() => {
     const arr = data.filter(isAwaitingAdmin);
     arr.sort((a, b) => {
@@ -287,18 +321,18 @@ export default function MyReservationsPage() {
   const canUploadSlip = (r: MyReservation) => {
     const p = r.payment;
     if (!p) return false;
-    // ถ้า SUBMITTED มักจะมี slipImage แล้ว จึงไม่ผ่านเงื่อนไข !p.slipImage
     return (p.status === "PENDING" || p.status === "EXPIRED") && !p.slipImage;
   };
+
+  const [uploadingText, setUploadingText] = useState<string>("");
 
   const handleUploadSlip = async (paymentId: number, file: File) => {
     const fd = new FormData();
     fd.append("slip", file);
     try {
       setUploading(paymentId);
-      await axios.post(`${config.apiUrl}/payment/${paymentId}/slip`, fd, {
-        headers: { ...authHeader() },
-      });
+      setUploadingText(file.name);
+      await axios.post(`${config.apiUrl}/payment/${paymentId}/slip`, fd, { headers: { ...authHeader() } });
       Swal.fire({ icon: "success", title: "อัปโหลดสลิปสำเร็จ", timer: 1300, showConfirmButton: false });
       await fetchData();
     } catch (e: any) {
@@ -306,10 +340,11 @@ export default function MyReservationsPage() {
       Swal.fire({ icon: "error", title: "ไม่สำเร็จ", text: msg });
     } finally {
       setUploading(null);
+      setUploadingText("");
     }
   };
 
-  // ปุ่มเลขหน้าแบบหน้าต่าง 5 ปุ่ม
+  // ปุ่มเลขหน้าต่าง 5 ปุ่ม
   const pageNumbers = useMemo(() => {
     const arr: number[] = [];
     const windowSize = 5;
@@ -320,151 +355,183 @@ export default function MyReservationsPage() {
     return arr;
   }, [currentPage, pages]);
 
-  // ===== การ์ดสรุป (ใช้เฉพาะส่วนบน)
-  const OrderSummaryCard = ({ title, r }: { title: string; r: MyReservation }) => {
-    return (
-      <div className="mb-5 rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-medium">{title}</h3>
-          <StatusBadge label={r.status} tone={mapReservationTone(r.status)} />
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          {/* กล่องข้อมูลจอง + รายการอาหาร */}
-          <div className="rounded-xl border p-4">
-            <div className="mb-2 font-medium">
-              โต๊ะ: {r.tableLabel || "-"} • {fmtDateTime(r.dateStart)}
-            </div>
-            <div className="text-sm text-slate-600">
-              คน: {r.people ?? 0}
-              {r.dateEnd ? ` • ถึง ${fmtDateTime(r.dateEnd)}` : ""}
-            </div>
-
-            {r.order?.items?.length ? (
-              <div className="mt-3">
-                <div className="mb-2 text-sm font-medium">รายการอาหาร</div>
-                <ul className="grid gap-2 sm:grid-cols-2">
-                  {r.order.items.map((it) => {
-                    const src = fileUrl(it.image) || "/placeholder.png";
-                    return (
-                      <li key={it.id} className="flex items-center gap-3 rounded-lg border p-2">
-                        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-white">
-                          <Image
-                            src={src}
-                            alt={it.name}
-                            fill
-                            sizes="56px"
-                            className="object-cover"
-                            unoptimized
-                          />
-                        </div>
-                        <div className="min-w-0 text-sm">
-                          <div className="truncate font-medium">{it.name}</div>
-                          <div className="text-slate-600">
-                            × {it.qty} • {(Number(it.price) * Number(it.qty)).toLocaleString()} ฿
-                          </div>
-                          {it.note ? <div className="text-xs text-slate-500">โน้ต: {it.note}</div> : null}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
+  // การ์ดสรุปด้านบน (มี motion + icons)
+  const OrderSummaryCard = ({ title, r }: { title: string; r: MyReservation }) => (
+    <motion.div
+      variants={fadeUp}
+      initial="hidden"
+      animate="show"
+      className="mb-5 rounded-2xl border bg-white/90 p-4 shadow-sm"
+      {...hoverLift}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-base font-medium inline-flex items-center gap-2">
+          <ReceiptText className="h-4 w-4 text-slate-600" />
+          {title}
+        </h3>
+        <StatusBadge
+          label={r.status}
+          tone={mapReservationTone(r.status)}
+          icon={
+            r.status === "CONFIRMED" ? (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            ) : r.status === "CANCELED" || r.status === "EXPIRED" ? (
+              <XCircle className="h-3.5 w-3.5" />
+            ) : r.status === "AWAITING_PAYMENT" ? (
+              <Wallet className="h-3.5 w-3.5" />
             ) : (
-              <div className="mt-3 text-sm text-slate-500">ไม่มีรายการอาหาร (อาจเป็นการมัดจำโต๊ะ)</div>
-            )}
+              <Hourglass className="h-3.5 w-3.5" />
+            )
+          }
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* ข้อมูลจอง + รายการอาหาร */}
+        <div className="rounded-xl border p-4 bg-white/70">
+          <div className="mb-2 font-medium inline-flex items-center gap-2">
+            <CalendarClock className="h-4 w-4 text-slate-600" />
+            โต๊ะ: {r.tableLabel || "-"} • {fmtDateTime(r.dateStart)}
+          </div>
+          <div className="text-sm text-slate-600">
+            คน: {r.people ?? 0}
+            {r.dateEnd ? ` • ถึง ${fmtDateTime(r.dateEnd)}` : ""}
           </div>
 
-          {/* กล่องสถานะบิล/ชำระเงิน + สลิป */}
-          <div className="rounded-xl border p-4">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-slate-600">สถานะบิล</div>
-                <StatusBadge label={r.order?.status ?? "-"} tone={mapOrderTone(r.order?.status ?? null)} />
+          {r.order?.items?.length ? (
+            <motion.ul
+              variants={staggerList}
+              initial="hidden"
+              animate="show"
+              className="mt-3 grid gap-2 sm:grid-cols-2"
+            >
+              {r.order.items.map((it) => {
+                const src = fileUrl(it.image) || "/placeholder.png";
+                return (
+                  <motion.li
+                    key={it.id}
+                    variants={fadeUp}
+                    className="flex items-center gap-3 rounded-lg border p-2"
+                  >
+                    <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-white">
+                      <Image src={src} alt={it.name} fill sizes="56px" className="object-cover" unoptimized />
+                    </div>
+                    <div className="min-w-0 text-sm">
+                      <div className="truncate font-medium inline-flex items-center gap-1">
+                        <Utensils className="h-3.5 w-3.5 text-slate-500" />
+                        {it.name}
+                      </div>
+                      <div className="text-slate-600">
+                        × {it.qty} • {money(Number(it.price) * Number(it.qty))} ฿
+                      </div>
+                      {it.note ? <div className="text-xs text-slate-500">โน้ต: {it.note}</div> : null}
+                    </div>
+                  </motion.li>
+                );
+              })}
+            </motion.ul>
+          ) : (
+            <div className="mt-3 text-sm text-slate-500">ไม่มีรายการอาหาร (อาจเป็นการมัดจำโต๊ะ)</div>
+          )}
+        </div>
+
+        {/* สถานะบิล/ชำระเงิน + สลิป */}
+        <div className="rounded-xl border p-4 bg-white/70">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-slate-600">สถานะบิล</div>
+              <StatusBadge label={r.order?.status ?? "-"} tone={mapOrderTone(r.order?.status ?? null)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-slate-600">สถานะชำระเงิน</div>
+              <StatusBadge label={r.payment?.status ?? "-"} tone={mapPaymentTone(r.payment?.status ?? null)} />
+            </div>
+            {r.payment?.amount ? (
+              <div className="text-sm">
+                ยอดชำระ: <span className="font-medium">{money(r.payment.amount)} ฿</span>
+                {r.payment.expiresAt ? <span className="text-slate-500"> • หมดเวลา {fmtDateTime(r.payment.expiresAt)}</span> : null}
               </div>
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-slate-600">สถานะชำระเงิน</div>
-                <StatusBadge label={r.payment?.status ?? "-"} tone={mapPaymentTone(r.payment?.status ?? null)} />
+            ) : null}
+          </div>
+
+          {/* อนุญาตอัปโหลดสลิปเฉพาะที่ยังไม่ส่ง */}
+          {r.payment && canUploadSlip(r) ? (
+            <div className="mt-3">
+              <label className="text-sm text-slate-600">อัปโหลดสลิป:</label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={uploading === r.payment.id}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleUploadSlip(r.payment!.id, f);
+                  }}
+                  className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-800"
+                />
               </div>
-              {r.payment?.amount ? (
-                <div className="text-sm">
-                  ยอดชำระ: <span className="font-medium">{r.payment.amount.toLocaleString()} ฿</span>
-                  {r.payment.expiresAt ? (
-                    <span className="text-slate-500"> • หมดเวลา {fmtDateTime(r.payment.expiresAt)}</span>
-                  ) : null}
-                </div>
+              {uploading === r.payment.id ? (
+                <div className="mt-1 text-xs text-slate-500">กำลังอัปโหลด… {uploadingText}</div>
               ) : null}
             </div>
+          ) : null}
 
-            {/* อนุญาตอัปโหลดสลิปเฉพาะออเดอร์ที่ยังไม่ได้ส่งสลิป */}
-            {r.payment && canUploadSlip(r) ? (
-              <div className="mt-3">
-                <label className="text-sm text-slate-600">อัปโหลดสลิป:</label>
-                <div className="mt-1">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    disabled={uploading === r.payment.id}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleUploadSlip(r.payment!.id, f);
-                    }}
-                    className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-800"
-                  />
-                  {uploading === r.payment.id ? (
-                    <div className="mt-1 text-xs text-slate-500">กำลังอัปโหลด...</div>
-                  ) : null}
-                </div>
+          {r.payment?.slipImage ? (
+            <div className="mt-3">
+              <div className="mb-1 text-sm text-slate-600">สลิปที่อัปโหลด:</div>
+              <div className="relative h-40 w-full overflow-hidden rounded-lg border bg-white">
+                <Image
+                  src={fileUrl(r.payment.slipImage) || "/placeholder.png"}
+                  alt="Slip"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 50vw"
+                  className="object-contain"
+                  unoptimized
+                />
               </div>
-            ) : null}
-
-            {r.payment?.slipImage ? (
-              <div className="mt-3">
-                <div className="mb-1 text-sm text-slate-600">สลิปที่อัปโหลด:</div>
-                <div className="relative h-40 w-full overflow-hidden rounded-lg border bg-white">
-                  <Image
-                    src={fileUrl(r.payment.slipImage) || "/placeholder.png"}
-                    alt="Slip"
-                    fill
-                    sizes="(max-width: 768px) 100vw, 50vw"
-                    className="object-contain"
-                    unoptimized
-                  />
-                </div>
-              </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
       </div>
-    );
-  };
+    </motion.div>
+  );
 
   return (
-    <main className="min-h-screen bg-neutral-50">
-      
+    <main className="min-h-screen bg-neutral-50 relative">
+      {/* พื้นหลังนุ่ม ๆ */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-60 bg-gradient-to-b from-indigo-100/80 to-transparent blur-2xl"
+      />
 
-      <section className="mx-auto max-w-6xl px-4 py-8 space-y-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold bg-gradient-to-r from-indigo-600 to-emerald-600 bg-clip-text text-transparent">
-            ประวัติการจองของฉัน
-          </h1>
+      <section className="mx-auto max-w-6xl px-4 py-8 space-y-8 relative">
+        <motion.div variants={fadeUp} initial="hidden" animate="show" className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-semibold tracking-tight bg-gradient-to-r from-indigo-600 to-emerald-600 bg-clip-text text-transparent">
+              ประวัติการจองของฉัน
+            </h1>
+            <p className="text-sm text-slate-500 mt-1">ดูสถานะการจอง ออเดอร์ และสลิปชำระเงินย้อนหลัง</p>
+          </div>
 
-        <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-lg border bg-white p-1">
+          <div className="flex items-center gap-2">
+            {/* ตัวกรอง */}
+            <div className="inline-flex rounded-xl border bg-white p-1 shadow-sm">
               {(["all", "upcoming", "past"] as const).map((k) => (
-                <button
+                <motion.button
                   key={k}
                   onClick={() => setFilter(k)}
-                  className={`px-3 py-1 text-sm rounded-md transition ${
-                    filter === k ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
+                  className={`px-3 py-1.5 text-sm rounded-lg transition ${
+                    filter === k ? "bg-slate-900 text-white shadow" : "text-slate-700 hover:bg-slate-100"
                   }`}
+                  whileTap={{ scale: 0.98 }}
                 >
                   {k === "all" ? "ทั้งหมด" : k === "upcoming" ? "กำลังจะถึง" : "ที่ผ่านมา"}
-                </button>
+                </motion.button>
               ))}
             </div>
 
-            <div className="inline-flex items-center gap-2 rounded-lg border bg-white px-2 py-1">
+            {/* แสดงต่อหน้า */}
+            <div className="inline-flex items-center gap-2 rounded-xl border bg-white px-2 py-1 shadow-sm">
               <span className="text-sm text-slate-600">แสดง</span>
               <select
                 value={pageSize}
@@ -479,189 +546,212 @@ export default function MyReservationsPage() {
               </select>
             </div>
 
-            <button
+            <motion.button
               onClick={fetchData}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800 active:scale-[0.98] transition"
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm text-white shadow hover:bg-slate-800 active:scale-[0.98] transition"
+              whileTap={{ scale: 0.98 }}
             >
-              Refresh
-            </button>
+              <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              รีเฟรช
+            </motion.button>
           </div>
-        </div>
+        </motion.div>
 
         {/* ===== ส่วนบน: ออเดอร์ล่าสุด & รออนุมัติล่าสุด ===== */}
-        <section className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h2 className="mb-3 text-lg font-medium">ออเดอร์ล่าสุด & รออนุมัติล่าสุด</h2>
+        <AccentWrap>
+          <div className="p-5">
+            <div className="mb-3 inline-flex items-center gap-2 text-lg font-medium">
+              <ReceiptText className="h-5 w-5 text-slate-600" />
+              ออเดอร์ล่าสุด & รายการที่รอแอดมินตรวจ
+            </div>
 
-          {!latestOrder && !latestAwaiting ? (
-            <p className="text-sm text-slate-600">ยังไม่มีออเดอร์</p>
-          ) : (
-            <>
-              {latestAwaiting ? (
-                <OrderSummaryCard title="ออเดอร์ที่รอแอดมินอนุมัติล่าสุด" r={latestAwaiting} />
-              ) : null}
+            <AnimatePresence initial={false} mode="popLayout">
+              {!latestOrder && !latestAwaiting ? (
+                <motion.div
+                  key="empty"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="grid place-items-center py-8 text-slate-500 text-sm"
+                >
+                  ยังไม่มีรายการล่าสุด
+                </motion.div>
+              ) : (
+                <div className="space-y-4">
+                  {latestAwaiting ? (
+                    <OrderSummaryCard title="ออเดอร์ที่รอแอดมินอนุมัติล่าสุด" r={latestAwaiting} />
+                  ) : null}
 
-              {latestOrder && (!latestAwaiting || latestOrder.id !== latestAwaiting.id) ? (
-                <OrderSummaryCard title="ออเดอร์ล่าสุดที่สั่งมา" r={latestOrder} />
-              ) : null}
-            </>
-          )}
-        </section>
+                  {latestOrder && (!latestAwaiting || latestOrder.id !== latestAwaiting.id) ? (
+                    <OrderSummaryCard title="ออเดอร์ล่าสุดที่สั่งมา" r={latestOrder} />
+                  ) : null}
+                </div>
+              )}
+            </AnimatePresence>
+          </div>
+        </AccentWrap>
 
         {/* ===== รายการทั้งหมด + pagination (ประวัติ) ===== */}
-        <section className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-end justify-between">
-            <h2 className="text-lg font-medium">รายการการจอง</h2>
-            <div className="text-xs text-slate-500">
-              ทั้งหมด {total.toLocaleString()} รายการ • หน้า {currentPage}/{pages}
+        <AccentWrap>
+          <div className="p-5">
+            <div className="mb-4 flex items-end justify-between">
+              <h2 className="text-lg font-medium inline-flex items-center gap-2">
+                <CalendarClock className="h-5 w-5 text-slate-600" />
+                รายการการจองทั้งหมด
+              </h2>
+              <div className="text-xs text-slate-500">ทั้งหมด {total.toLocaleString()} รายการ • หน้า {currentPage}/{pages}</div>
             </div>
-          </div>
 
-          {loading ? (
-            <div className="grid gap-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-20 animate-pulse rounded-xl bg-slate-100" />
-              ))}
-            </div>
-          ) : paginated.length === 0 ? (
-            <div className="text-sm text-slate-600">ไม่พบรายการ</div>
-          ) : (
-            <>
+            {loading ? (
               <div className="grid gap-3">
-                {paginated.map((r) => (
-                  <div key={r.id} className="rounded-xl border p-4 hover:shadow-sm transition-shadow">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="font-medium">
-                        #{r.id} • โต๊ะ {r.tableLabel || "-"} • {fmtDateTime(r.dateStart)}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <StatusBadge label={r.status} tone={mapReservationTone(r.status)} />
-                        <StatusBadge label={`ORDER: ${r.order?.status ?? "-"}`} tone={mapOrderTone(r.order?.status ?? null)} />
-                        <StatusBadge
-                          label={`PAYMENT: ${r.payment?.status ?? "-"}`}
-                          tone={mapPaymentTone(r.payment?.status ?? null)}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mt-1 text-sm text-slate-600">
-                      คน: {r.people ?? 0}
-                      {r.order?.total ? <> • ยอดอาหาร {r.order.total.toLocaleString()} ฿</> : null}
-                      {r.payment?.amount ? <> • ยอดชำระ {r.payment.amount.toLocaleString()} ฿</> : null}
-                    </div>
-
-                    {/* รายการอาหาร (พร้อมรูป) */}
-                    {r.order?.items?.length ? (
-                      <div className="mt-3">
-                        <div className="mb-2 text-sm font-medium">รายการอาหาร</div>
-                        <ul className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-                          {r.order.items.map((it) => {
-                            const src = fileUrl(it.image) || "/placeholder.png";
-                            return (
-                              <li key={it.id} className="flex items-center gap-3 rounded-lg border p-2">
-                                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border bg-white">
-                                  <Image
-                                    src={src}
-                                    alt={it.name}
-                                    fill
-                                    sizes="48px"
-                                    className="object-cover"
-                                    unoptimized
-                                  />
-                                </div>
-                                <div className="min-w-0 text-sm">
-                                  <div className="truncate font-medium">{it.name}</div>
-                                  <div className="text-slate-600">
-                                    × {it.qty} • {(Number(it.price) * Number(it.qty)).toLocaleString()} ฿
-                                  </div>
-                                  {it.note ? <div className="text-xs text-slate-500">โน้ต: {it.note}</div> : null}
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    ) : null}
-
-                    {/* สลิป (ประวัติ: แสดงอย่างเดียว ไม่ให้อัปโหลด) */}
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
-                      {r.payment?.slipImage ? (
-                        <Link
-                          href={fileUrl(r.payment.slipImage) || "#"}
-                          target="_blank"
-                          className="text-sm text-slate-700 underline"
-                        >
-                          ดูสลิป
-                        </Link>
-                      ) : null}
-                    </div>
-                  </div>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <motion.div key={i} className="h-24 rounded-xl bg-slate-100" animate={{ opacity: [0.6, 1, 0.6] }} transition={{ repeat: Infinity, duration: 1.2 }} />
                 ))}
               </div>
-
-              {/* pagination controls */}
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-slate-500">
-                  แสดง {startIdx + 1}–{Math.min(endIdx, total)} จาก {total.toLocaleString()} รายการ
-                </div>
-
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setPage(1)}
-                    disabled={currentPage === 1}
-                    className={`rounded-md border px-2 py-1 text-sm ${
-                      currentPage === 1 ? "text-slate-300" : "hover:bg-slate-50"
-                    }`}
-                  >
-                    « หน้าแรก
-                  </button>
-                  <button
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={currentPage === 1}
-                    className={`rounded-md border px-2 py-1 text-sm ${
-                      currentPage === 1 ? "text-slate-300" : "hover:bg-slate-50"
-                    }`}
-                  >
-                    ‹ ก่อนหน้า
-                  </button>
-
-                  {pageNumbers.map((n) => (
-                    <button
-                      key={n}
-                      onClick={() => setPage(n)}
-                      className={`rounded-md border px-3 py-1 text-sm ${
-                        n === currentPage ? "bg-slate-900 text-white" : "hover:bg-slate-50"
-                      }`}
+            ) : paginated.length === 0 ? (
+              <div className="grid place-items-center py-10 text-slate-500 text-sm">ไม่พบรายการ</div>
+            ) : (
+              <>
+                <motion.div variants={staggerList} initial="hidden" animate="show" className="grid gap-3">
+                  {paginated.map((r) => (
+                    <motion.div
+                      key={r.id}
+                      variants={fadeUp}
+                      className="rounded-xl border p-4 bg-white/80 hover:shadow-sm transition-shadow"
+                      {...hoverLift}
                     >
-                      {n}
-                    </button>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium inline-flex items-center gap-2">
+                          #{r.id} • โต๊ะ {r.tableLabel || "-"} • {fmtDateTime(r.dateStart)}
+                          <ChevronRight className="h-4 w-4 text-slate-400" />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge
+                            label={r.status}
+                            tone={mapReservationTone(r.status)}
+                            icon={
+                              r.status === "CONFIRMED" ? (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              ) : r.status === "CANCELED" || r.status === "EXPIRED" ? (
+                                <XCircle className="h-3.5 w-3.5" />
+                              ) : r.status === "AWAITING_PAYMENT" ? (
+                                <Wallet className="h-3.5 w-3.5" />
+                              ) : (
+                                <Hourglass className="h-3.5 w-3.5" />
+                              )
+                            }
+                          />
+                          <StatusBadge label={`ORDER: ${r.order?.status ?? "-"}`} tone={mapOrderTone(r.order?.status ?? null)} />
+                          <StatusBadge label={`PAYMENT: ${r.payment?.status ?? "-"}`} tone={mapPaymentTone(r.payment?.status ?? null)} />
+                        </div>
+                      </div>
+
+                      <div className="mt-1 text-sm text-slate-600">
+                        คน: {r.people ?? 0}
+                        {r.order?.total ? <> • ยอดอาหาร {money(r.order.total)} ฿</> : null}
+                        {r.payment?.amount ? <> • ยอดชำระ {money(r.payment.amount)} ฿</> : null}
+                        {r.dateEnd ? <> • ถึง {fmtDateTime(r.dateEnd)}</> : null}
+                      </div>
+
+                      {/* รายการอาหาร (พร้อมรูป) */}
+                      {r.order?.items?.length ? (
+                        <div className="mt-3">
+                          <div className="mb-2 text-sm font-medium">รายการอาหาร</div>
+                          <motion.ul variants={staggerList} initial="hidden" animate="show" className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                            {r.order.items.map((it) => {
+                              const src = fileUrl(it.image) || "/placeholder.png";
+                              return (
+                                <motion.li key={it.id} variants={fadeUp} className="flex items-center gap-3 rounded-lg border p-2">
+                                  <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border bg-white">
+                                    <Image src={src} alt={it.name} fill sizes="48px" className="object-cover" unoptimized />
+                                  </div>
+                                  <div className="min-w-0 text-sm">
+                                    <div className="truncate font-medium inline-flex items-center gap-1">
+                                      <Utensils className="h-3.5 w-3.5 text-slate-500" />
+                                      {it.name}
+                                    </div>
+                                    <div className="text-slate-600">
+                                      × {it.qty} • {money(Number(it.price) * Number(it.qty))} ฿
+                                    </div>
+                                    {it.note ? <div className="text-xs text-slate-500">โน้ต: {it.note}</div> : null}
+                                  </div>
+                                </motion.li>
+                              );
+                            })}
+                          </motion.ul>
+                        </div>
+                      ) : null}
+
+                      {/* สลิป (ประวัติ: แสดงอย่างเดียว) */}
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        {r.payment?.slipImage ? (
+                          <Link href={fileUrl(r.payment.slipImage) || "#"} target="_blank" className="text-sm text-slate-700 underline">
+                            ดูสลิป
+                          </Link>
+                        ) : null}
+                      </div>
+                    </motion.div>
                   ))}
+                </motion.div>
 
-                  <button
-                    onClick={() => setPage((p) => Math.min(pages, p + 1))}
-                    disabled={currentPage === pages}
-                    className={`rounded-md border px-2 py-1 text-sm ${
-                      currentPage === pages ? "text-slate-300" : "hover:bg-slate-50"
-                    }`}
-                  >
-                    ถัดไป ›
-                  </button>
-                  <button
-                    onClick={() => setPage(pages)}
-                    disabled={currentPage === pages}
-                    className={`rounded-md border px-2 py-1 text-sm ${
-                      currentPage === pages ? "text-slate-300" : "hover:bg-slate-50"
-                    }`}
-                  >
-                    หน้าสุดท้าย »
-                  </button>
+                {/* pagination controls */}
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-slate-500">
+                    แสดง {startIdx + 1}–{Math.min(endIdx, total)} จาก {total.toLocaleString()} รายการ
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <motion.button
+                      onClick={() => setPage(1)}
+                      disabled={currentPage === 1}
+                      className={`rounded-lg border px-2 py-1 text-sm ${currentPage === 1 ? "text-slate-300" : "hover:bg-slate-50"}`}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      « หน้าแรก
+                    </motion.button>
+                    <motion.button
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className={`rounded-lg border px-2 py-1 text-sm ${currentPage === 1 ? "text-slate-300" : "hover:bg-slate-50"}`}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      ‹ ก่อนหน้า
+                    </motion.button>
+
+                    {pageNumbers.map((n) => (
+                      <motion.button
+                        key={n}
+                        onClick={() => setPage(n)}
+                        className={`rounded-lg border px-3 py-1 text-sm ${n === currentPage ? "bg-slate-900 text-white" : "hover:bg-slate-50"}`}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        {n}
+                      </motion.button>
+                    ))}
+
+                    <motion.button
+                      onClick={() => setPage((p) => Math.min(pages, p + 1))}
+                      disabled={currentPage === pages}
+                      className={`rounded-lg border px-2 py-1 text-sm ${currentPage === pages ? "text-slate-300" : "hover:bg-slate-50"}`}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      ถัดไป ›
+                    </motion.button>
+                    <motion.button
+                      onClick={() => setPage(pages)}
+                      disabled={currentPage === pages}
+                      className={`rounded-lg border px-2 py-1 text-sm ${currentPage === pages ? "text-slate-300" : "hover:bg-slate-50"}`}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      หน้าสุดท้าย »
+                    </motion.button>
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
-        </section>
+              </>
+            )}
+          </div>
+        </AccentWrap>
       </section>
-
-
     </main>
   );
 }

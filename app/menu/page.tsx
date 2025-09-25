@@ -279,18 +279,27 @@ export default function MenuPage() {
 
     if (!socket.connected) socket.connect();
 
-    const upsertMenus = (payload: any) => {
-      const items: MenuItem[] = Array.isArray(payload) ? payload : [payload];
-      setMenus((prev) => {
-        const map = new Map<number, MenuItem>(prev.map((m) => [m.menu_id, m]));
-        for (const it of items) {
-          if (!it || typeof it.menu_id !== "number") continue;
-          const existed = map.get(it.menu_id) ?? ({} as MenuItem);
-          map.set(it.menu_id, { ...existed, ...it });
-        }
-        return Array.from(map.values());
-      });
-    };
+const upsertMenus = (payload: any) => {
+  const items: MenuItem[] = Array.isArray(payload) ? payload : [payload];
+  setMenus((prev) => {
+    const map = new Map<number, MenuItem>(prev.map((m) => [m.menu_id, m]));
+    for (const it of items) {
+      if (!it || typeof it.menu_id !== "number") continue;
+
+      // ✅ ถ้าอัปเดตมาเป็น Inactive ให้ลบทิ้งจาก state
+      if ((it.menu_status ?? 1) !== 1) {
+        map.delete(it.menu_id);
+        continue;
+      }
+
+      const existed = map.get(it.menu_id) ?? ({} as MenuItem);
+      map.set(it.menu_id, { ...existed, ...it });
+    }
+    // กันเหนียว: คืนเฉพาะที่ status=1
+    return Array.from(map.values()).filter((m) => (m.menu_status ?? 1) === 1);
+  });
+};
+
     const removeMenus = (payload: any) => {
       const ids = Array.isArray(payload)
         ? payload.map((x) => (typeof x === "number" ? x : x?.menu_id)).filter((n) => typeof n === "number")
@@ -312,28 +321,31 @@ export default function MenuPage() {
 
     socket.on("menu", onMenuAll);
     socket.on("foodType", onFoodTypeAll);
-    socket.on("menu:add", onMenuAdded);
-    socket.on("menu:update", onMenuUpdated);
-    socket.on("menu:delete", onMenuDeleted);
+  socket.on("menu:created", onMenuAdded);
+  socket.on("menu:updated", onMenuUpdated);
+  socket.on("menu:deleted", onMenuDeleted);
 
     return () => {
-      socket.off("menu", onMenuAll);
-      socket.off("foodType", onFoodTypeAll);
-      socket.off("menu:add", onMenuAdded);
-      socket.off("menu:update", onMenuUpdated);
-      socket.off("menu:delete", onMenuDeleted);
+    socket.off("menu", onMenuAll);
+    socket.off("foodType", onFoodTypeAll);
+    socket.off("menu:created", onMenuAdded);
+    socket.off("menu:updated", onMenuUpdated);
+    socket.off("menu:deleted", onMenuDeleted);
     };
   }, []);
 
   // ===== Filters =====
-  const filtered = useMemo(() => {
-    const kw = q.trim().toLowerCase();
-    return menus.filter((m) => {
+const filtered = useMemo(() => {
+  const kw = q.trim().toLowerCase();
+  return menus
+    .filter((m) => (m.menu_status ?? 1) === 1) // ✅ เพิ่มบรรทัดนี้
+    .filter((m) => {
       const matchQ = !kw || m.menu_name.toLowerCase().includes(kw) || String(m.menu_price).includes(kw);
       const matchCat = !catId || (m.Typefoods ?? []).some((t) => getTypefoodId(t) === catId);
       return matchQ && matchCat;
     });
-  }, [menus, q, catId]);
+}, [menus, q, catId]);
+
 
   // ===== Cart helpers =====
   const NOTE_MAX = 160;

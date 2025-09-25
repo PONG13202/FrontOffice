@@ -291,28 +291,35 @@ useEffect(() => {
   const [polling, setPolling] = useState<boolean>(false);
   const [creating, setCreating] = useState(false);
 
-  // ต้องล็อกอิน + ต้องมี tableId
-  useEffect(() => {
-    const token = localStorage.getItem("token") || localStorage.getItem("authToken");
-    if (!token) {
-      Swal.fire({
-        icon: "info",
-        title: "กรุณาเข้าสู่ระบบก่อน",
-        showCancelButton: true,
-        confirmButtonText: "ไปหน้าเข้าสู่ระบบ",
-        cancelButtonText: "อยู่หน้านี้",
-      }).then((r) => {
-        if (r.isConfirmed) {
-          const redirect = typeof window !== "undefined" ? window.location.pathname + "?" + q.toString() : "/results";
-          router.push(`/signIn?redirect=${encodeURIComponent(redirect)}`);
-        }
-      });
-    }
-    const effectiveTid = tableIdFromUrl || (readBookingSafe()?.tableId as any);
-    if (!effectiveTid) {
-      Swal.fire({ icon: "warning", title: "ไม่พบโต๊ะที่เลือก", text: "กรุณาเลือกโต๊ะใหม่อีกครั้ง" }).then(() => router.replace("/table"));
-    }
-  }, [q, router, tableIdFromUrl]);
+// ต้องล็อกอิน + ต้องมี tableId
+useEffect(() => {
+  const token = localStorage.getItem("token") || localStorage.getItem("authToken");
+  if (!token) {
+    Swal.fire({
+      icon: "info",
+      title: "กรุณาเข้าสู่ระบบก่อน",
+      showCancelButton: true,
+      confirmButtonText: "ไปหน้าเข้าสู่ระบบ",
+      cancelButtonText: "อยู่หน้านี้",
+    }).then((r) => {
+      if (r.isConfirmed) {
+        const redirect = typeof window !== "undefined"
+          ? window.location.pathname + "?" + q.toString()
+          : "/results";
+        router.push(`/signIn?redirect=${encodeURIComponent(redirect)}`);
+      }
+    });
+  }
+  const effectiveTid = tableIdFromUrl || (readBookingSafe()?.tableId as any);
+  if (!effectiveTid) {
+    Swal.fire({
+      icon: "warning",
+      title: "ไม่พบโต๊ะที่เลือก",
+      text: "กรุณาเลือกโต๊ะใหม่อีกครั้ง"
+      
+    }).then(() => router.replace("/table"));
+  }
+}, [q, router, tableIdFromUrl]);
 
   // ---------- โหลดตะกร้า ----------
   const [items, setItems] = useState<CartLine[]>([]);

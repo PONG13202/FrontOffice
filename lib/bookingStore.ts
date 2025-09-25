@@ -27,6 +27,7 @@ export type BookingDraft = {
 };
 
 function getCurrentUserId(): number | null {
+  if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(LS_USER_KEY);
     const u = raw ? JSON.parse(raw) : null;
@@ -40,7 +41,9 @@ function isPastDate(dateISO?: string) {
   if (!dateISO) return false;
   try {
     const today = new Date();
-    const yyyyMmDd = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()))
+    const yyyyMmDd = new Date(
+      Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+    )
       .toISOString()
       .slice(0, 10);
     return dateISO < yyyyMmDd;
@@ -54,6 +57,8 @@ function isPastDate(dateISO?: string) {
  * หมายเหตุ: ไม่ลบเมื่อพบ reservationId — เราจะให้ตัวเคลียร์เฉพาะกิจเป็นคนลบ
  */
 export function readBookingSafe(): BookingDraft | null {
+  if (typeof window === "undefined") return null;
+
   try {
     // migrate v1 -> v2
     const legacy = localStorage.getItem("booking:v1");
@@ -104,13 +109,17 @@ export function readBookingSafe(): BookingDraft | null {
     localStorage.removeItem(LS_BOOKING_KEY);
     return null;
   } catch {
-    localStorage.removeItem(LS_BOOKING_KEY);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(LS_BOOKING_KEY);
+    }
     return null;
   }
 }
 
 /** เขียน booking โดย merge ของเดิม + ผูก owner ให้แน่ใจ */
 export function writeBookingSafe(partial: BookingDraft) {
+  if (typeof window === "undefined") return;
+
   const uid = getCurrentUserId();
   let prev: BookingDraft = {};
   try {
@@ -130,12 +139,14 @@ export function writeBookingSafe(partial: BookingDraft) {
 
 /** ล้าง booking */
 export function clearBooking() {
+  if (typeof window === "undefined") return;
   localStorage.removeItem(LS_BOOKING_KEY);
   window.dispatchEvent(new Event("booking:changed"));
 }
 
 /** ล้าง cart */
 export function clearCart() {
+  if (typeof window === "undefined") return;
   localStorage.removeItem(LS_CART_KEY);
   window.dispatchEvent(new Event("cart:changed"));
 }
@@ -150,8 +161,9 @@ export function clearBookingAndCart() {
  * เคลียร์หลัง commit (เมื่อมี reservationId ใน booking)
  * คืน true ถ้ามีการเคลียร์
  */
-// เคลียร์หลัง commit จริง ๆ (เฉพาะเสร็จสมบูรณ์แล้ว)
 export function clearIfCommitted(finalStatuses: string[] = ["CONFIRMED", "CANCELED", "EXPIRED"]): boolean {
+  if (typeof window === "undefined") return false;
+
   try {
     const raw = localStorage.getItem(LS_BOOKING_KEY);
     if (!raw) return false;
