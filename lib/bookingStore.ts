@@ -17,6 +17,7 @@ export type BookingDraft = {
   date?: string;
   time?: string;
   people?: number;
+  duration?: number; 
   tableId?: string | number;
   tableName?: string;
   reservationId?: number | null;

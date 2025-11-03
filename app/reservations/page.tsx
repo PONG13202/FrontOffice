@@ -1,4 +1,3 @@
-// app/reservations/page.tsx
 "use client";
 
 import React, { useEffect, useCallback, useMemo, useState } from "react";
@@ -7,7 +6,7 @@ import Image from "next/image";
 import axios from "axios";
 import Swal from "sweetalert2";
 import { clearIfCommitted } from "@/lib/bookingStore";
-import { socket } from "@/app/socket";
+import { useSocket } from "@/app/SocketProvider";
 import { config } from "@/app/config";
 
 // 🌀 Motion + Icons
@@ -190,6 +189,7 @@ export default function MyReservationsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "upcoming" | "past">("all");
   const [uploading, setUploading] = useState<number | null>(null);
+  const socket = useSocket();
 
   // pagination (ฝั่งหน้าเว็บ)
   const PAGE_SIZE_OPTIONS = [5, 10, 20] as const;
@@ -226,35 +226,46 @@ export default function MyReservationsPage() {
     }
   }, []);
 
-  // initial fetch + socket realtime
-  useEffect(() => {
-    fetchData();
-    try { clearIfCommitted(); } catch {}
+useEffect(() => {
+  fetchData();
+  try { clearIfCommitted(); } catch {}
 
-    const token = localStorage.getItem("token") || localStorage.getItem("authToken") || undefined;
-    if (!socket.connected) {
-      if (token) (socket as any).auth = { token };
-      socket.connect();
-    }
-    
+  const token = localStorage.getItem("token") || localStorage.getItem("authToken") || undefined;
+  if (!socket.connected) {
+    if (token) (socket as any).auth = { token };
+    socket.connect();
+  }
 
-    const onEvent = () => fetchData();
-    socket.on("reservation:created", onEvent);
-    socket.on("reservation:updated", onEvent);
-    socket.on("reservation:confirmed", onEvent);
-    socket.on("reservation:expired", onEvent);
-    socket.on("reservation:canceled", onEvent);
-    socket.on("payment:succeeded", onEvent);
+  const userId = getUserIdFromJWT();
+  if (userId) socket.emit("join", `user:${userId}`);
 
-    return () => {
-      socket.off("reservation:created", onEvent);
-      socket.off("reservation:updated", onEvent);
-      socket.off("reservation:confirmed", onEvent);
-      socket.off("reservation:expired", onEvent);
-      socket.off("reservation:canceled", onEvent);
-      socket.off("payment:succeeded", onEvent);
-    };
-  }, [fetchData]);
+  const onEvent = () => fetchData();
+
+  // ✅ Reservation events
+  socket.on("reservation:created", onEvent);
+  socket.on("reservation:updated", onEvent);
+  socket.on("reservation:confirmed", onEvent);
+  socket.on("reservation:expired", onEvent);
+  socket.on("reservation:canceled", onEvent);
+
+  // ✅ Payment events (ตรงกับ backend)
+  socket.on("payment:updated", onEvent);
+  socket.on("payment:confirmed", onEvent);
+
+  return () => {
+    if (userId) socket.emit("leave", `user:${userId}`);
+    socket.off("reservation:created", onEvent);
+    socket.off("reservation:updated", onEvent);
+    socket.off("reservation:confirmed", onEvent);
+    socket.off("reservation:expired", onEvent);
+    socket.off("reservation:canceled", onEvent);
+    socket.off("payment:updated", onEvent);
+    socket.off("payment:confirmed", onEvent);
+  };
+}, [fetchData, socket]);
+
+
+
 
   useEffect(() => {
     setPage(1);
@@ -364,7 +375,7 @@ export default function MyReservationsPage() {
       className="mb-5 rounded-2xl border bg-white/90 p-4 shadow-sm"
       {...hoverLift}
     >
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
         <h3 className="text-base font-medium inline-flex items-center gap-2">
           <ReceiptText className="h-4 w-4 text-slate-600" />
           {title}
@@ -403,7 +414,7 @@ export default function MyReservationsPage() {
               variants={staggerList}
               initial="hidden"
               animate="show"
-              className="mt-3 grid gap-2 sm:grid-cols-2"
+              className="mt-3 grid gap-2 grid-cols-1 sm:grid-cols-2"
             >
               {r.order.items.map((it) => {
                 const src = fileUrl(it.image) || "/placeholder.png";
@@ -513,7 +524,7 @@ export default function MyReservationsPage() {
             <p className="text-sm text-slate-500 mt-1">ดูสถานะการจอง ออเดอร์ และสลิปชำระเงินย้อนหลัง</p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
             {/* ตัวกรอง */}
             <div className="inline-flex rounded-xl border bg-white p-1 shadow-sm">
               {(["all", "upcoming", "past"] as const).map((k) => (
@@ -594,7 +605,7 @@ export default function MyReservationsPage() {
         {/* ===== รายการทั้งหมด + pagination (ประวัติ) ===== */}
         <AccentWrap>
           <div className="p-5">
-            <div className="mb-4 flex items-end justify-between">
+            <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-end justify-between gap-2">
               <h2 className="text-lg font-medium inline-flex items-center gap-2">
                 <CalendarClock className="h-5 w-5 text-slate-600" />
                 รายการการจองทั้งหมด
@@ -657,7 +668,7 @@ export default function MyReservationsPage() {
                       {r.order?.items?.length ? (
                         <div className="mt-3">
                           <div className="mb-2 text-sm font-medium">รายการอาหาร</div>
-                          <motion.ul variants={staggerList} initial="hidden" animate="show" className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                          <motion.ul variants={staggerList} initial="hidden" animate="show" className="grid gap-2 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
                             {r.order.items.map((it) => {
                               const src = fileUrl(it.image) || "/placeholder.png";
                               return (
@@ -700,7 +711,7 @@ export default function MyReservationsPage() {
                     แสดง {startIdx + 1}–{Math.min(endIdx, total)} จาก {total.toLocaleString()} รายการ
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-1 justify-center sm:justify-start">
                     <motion.button
                       onClick={() => setPage(1)}
                       disabled={currentPage === 1}

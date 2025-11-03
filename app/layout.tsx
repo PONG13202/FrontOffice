@@ -5,6 +5,7 @@ import "./globals.css";
 import ClientProviders from "./ClientProviders";
 import SiteFooter from "@/app/components/SiteFooter";
 import TopNav from "./components/TopNav";
+import { SocketProvider } from "./SocketProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,6 +49,7 @@ export default function RootLayout({
       
         className={`${geistSans.variable} ${geistMono.variable} ${prompt.variable} antialiased flex flex-col min-h-screen`}
       >
+        <SocketProvider>
         <ClientProviders>
           {/* Header */}
           <TopNav />
@@ -58,6 +60,7 @@ export default function RootLayout({
           {/* Footer */}
           <SiteFooter />
         </ClientProviders>
+        </SocketProvider>
       </body>
     </html>
   );

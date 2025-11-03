@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { cn } from "@/lib/utils";
 import { ShoppingCart, Plus, Minus, Trash2 } from "lucide-react";
 import { socket } from "@/app/socket";
-import { readBookingSafe, clearBooking, writeBookingSafe } from "@/lib/bookingStore";
+import { readBookingSafe, clearBooking, writeBookingSafe, type BookingDraft } from "@/lib/bookingStore";
 
 /* ==== Types ==== */
 type MenuImage = { menu_image_id: number; menu_id: number; menu_image: string; menu_status: number };
@@ -23,11 +23,25 @@ type MenuItem = {
   menu_price: number;
   menu_description?: string | null;
   menu_status: number;
+  isLimited?: boolean;      // ← เพิ่ม
+  stock?: number | null; 
   MenuImages?: MenuImage[];
   Typefoods?: FoodMenuTypeJoin[];
 };
 type FoodType = { id?: number; name?: string; typefood_id?: number; typefood_name?: string };
 type CartItem = { id: number; name: string; price: number; qty: number; img?: string | null; note?: string };
+const cartQtyOf = (cart: Record<number, CartItem>, id: number) => cart[id]?.qty ?? 0;
+
+const remainingOf = (item: MenuItem, cart: Record<number, CartItem>) => {
+  if (!item.isLimited) return Infinity; // ไม่จำกัด
+  const stock = typeof item.stock === "number" ? item.stock : 0;
+  const inCart = cartQtyOf(cart, item.menu_id);
+  return Math.max(0, stock - inCart);
+};
+
+const canAddOne = (item: MenuItem, cart: Record<number, CartItem>) =>
+  remainingOf(item, cart) > 0;
+
 
 const THB = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
 const money = (n: number) => THB.format(n);
@@ -51,6 +65,26 @@ const normalizeFoodTypes = (arr: any[]): { id: number; name: string }[] =>
   (arr ?? [])
     .map((t) => ({ id: t?.id ?? t?.typefood_id, name: t?.name ?? t?.typefood_name }))
     .filter((t) => typeof t.id === "number" && !!t.name);
+// ↓↓↓ ADD: clamp cart by latest stock ↓↓↓
+const clampCartByMenus = (cart: Record<number, CartItem>, menus: MenuItem[]) => {
+  const byId = new Map(menus.map(m => [m.menu_id, m]));
+  let changed = false;
+  const next: Record<number, CartItem> = {};
+  for (const [idStr, ci] of Object.entries(cart)) {
+    const id = Number(idStr);
+    const item = byId.get(id);
+    if (!item) continue; // เมนูถูกลบไปแล้ว
+    let qty = ci.qty;
+    if (item.isLimited) {
+      const stock = typeof item.stock === "number" ? item.stock : 0;
+      qty = Math.min(qty, stock);
+      if (qty !== ci.qty) changed = true;
+      if (qty <= 0) continue;
+    }
+    next[id] = { ...ci, qty };
+  }
+  return changed ? next : cart;
+};
 
 /* ==== MenuCard ==== */
 function MenuCard({
@@ -68,6 +102,11 @@ function MenuCard({
 }) {
   const cover = coverOf(item);
   const types = typeNamesOf(item);
+const limited = !!item.isLimited;
+// ใช้จำนวนที่อยู่ในตะกร้าของเมนูนี้จากพร็อพ `count`
+const left = limited ? Math.max(0, (item.stock ?? 0) - count) : Infinity;
+const soldOut = limited && left <= 0;
+
   return (
     <Card className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       <button
@@ -89,7 +128,17 @@ function MenuCard({
             ไม่มีรูปภาพ
           </div>
         )}
-      </button>
+ {limited && (
+    <div
+      className={cn(
+        "absolute left-2 top-2 text-xs inline-flex items-center rounded-full px-2 py-0.5",
+        soldOut ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
+      )}
+    >
+      {soldOut ? "หมดชั่วคราว" : `คงเหลือ ${left}`}
+    </div>
+  )}
+</button>
 
       <div className="flex flex-col gap-1 px-3 pt-2">
         <button type="button" onClick={onOpenDetail} className="text-left cursor-pointer">
@@ -116,15 +165,9 @@ function MenuCard({
         </button>
       </div>
 
-      <div className="mt-auto border-t px-3 py-3">
+<div className="mt-auto border-t px-3 py-3">
         <div className="flex items-center justify-center gap-3">
-          <Button
-            size="icon"
-            variant="secondary"
-            className="h-8 w-8 rounded-full cursor-pointer"
-            onClick={onDec}
-            disabled={count <= 0}
-          >
+          <Button size="icon" variant="secondary" className="h-8 w-8 rounded-full cursor-pointer" onClick={onDec} disabled={count <= 0}>
             <Minus className="h-4 w-4" />
           </Button>
           <span className="min-w-5 text-center text-sm tabular-nums">{count}</span>
@@ -133,6 +176,9 @@ function MenuCard({
             variant="secondary"
             className="h-8 w-8 rounded-full cursor-pointer"
             onClick={onInc}
+            disabled={soldOut}   // ← ปิดเมื่อหมด
+            aria-disabled={soldOut}
+            title={soldOut ? "สินค้าหมดชั่วคราว" : undefined}
           >
             <Plus className="h-4 w-4" />
           </Button>
@@ -144,15 +190,6 @@ function MenuCard({
 
 /* ==== Cart / Booking ==== */
 const LS_CART_KEY = "cart:v1";
-type BookingDraft = {
-  tableId?: string;
-  tableName?: string;
-  date?: string;
-  time?: string;
-  people?: number;
-  duration?: number;
-  savedAt?: number;
-};
 
 export default function MenuPage() {
   const router = useRouter();
@@ -168,7 +205,12 @@ export default function MenuPage() {
   const [ready, setReady] = useState(false);
   const lastSavedRef = useRef<string>("");
   const [cartOpen, setCartOpen] = useState(false);
+const [page, setPage] = useState(1);
+const pageSize = 12;
 
+useEffect(() => {
+  setPage(1);
+}, [q, catId]);
   // ===== CART: init + sync =====
   useEffect(() => {
     const readCart = (): Record<number, CartItem> => {
@@ -271,6 +313,7 @@ export default function MenuPage() {
         if (!mounted) return;
         setMenus(mRes.data || []);
         setFoodTypes(fRes.data || []);
+        setCart((prev) => clampCartByMenus(prev, mRes.data || []));
       } finally {
         if (mounted) setLoading(false);
       }
@@ -281,12 +324,13 @@ export default function MenuPage() {
 
 const upsertMenus = (payload: any) => {
   const items: MenuItem[] = Array.isArray(payload) ? payload : [payload];
+
   setMenus((prev) => {
     const map = new Map<number, MenuItem>(prev.map((m) => [m.menu_id, m]));
     for (const it of items) {
       if (!it || typeof it.menu_id !== "number") continue;
 
-      // ✅ ถ้าอัปเดตมาเป็น Inactive ให้ลบทิ้งจาก state
+      // inactive → ลบทิ้ง
       if ((it.menu_status ?? 1) !== 1) {
         map.delete(it.menu_id);
         continue;
@@ -295,23 +339,45 @@ const upsertMenus = (payload: any) => {
       const existed = map.get(it.menu_id) ?? ({} as MenuItem);
       map.set(it.menu_id, { ...existed, ...it });
     }
-    // กันเหนียว: คืนเฉพาะที่ status=1
-    return Array.from(map.values()).filter((m) => (m.menu_status ?? 1) === 1);
+
+    const nextArr = Array.from(map.values()).filter((m) => (m.menu_status ?? 1) === 1);
+
+    // ⛑️ หั่นตะกร้าตามสต็อกล่าสุดทุกครั้งที่เมนูอัปเดต
+    setCart((prevCart) => clampCartByMenus(prevCart, nextArr));
+    return nextArr;
   });
 };
 
-    const removeMenus = (payload: any) => {
-      const ids = Array.isArray(payload)
-        ? payload.map((x) => (typeof x === "number" ? x : x?.menu_id)).filter((n) => typeof n === "number")
-        : [typeof payload === "number" ? payload : payload?.menu_id].filter((n) => typeof n === "number");
-      if (ids.length === 0) return;
-      setMenus((prev) => prev.filter((m) => !ids.includes(m.menu_id)));
-    };
 
-    const onMenuAll = (payload: any) => {
-      if (Array.isArray(payload)) setMenus(payload as MenuItem[]);
-      else upsertMenus(payload);
-    };
+const removeMenus = (payload: any) => {
+  const ids = Array.isArray(payload)
+    ? payload.map((x) => (typeof x === "number" ? x : x?.menu_id)).filter((n) => typeof n === "number")
+    : [typeof payload === "number" ? payload : payload?.menu_id].filter((n) => typeof n === "number");
+  if (ids.length === 0) return;
+
+  setMenus((prev) => {
+    const next = prev.filter((m) => !ids.includes(m.menu_id));
+    setCart((prevCart) => {
+      // ตัด item ที่ถูกลบ และหั่นตามสต็อกเมนูที่เหลือ
+      const trimmed = Object.fromEntries(
+        Object.entries(prevCart).filter(([k]) => !ids.includes(Number(k)))
+      ) as Record<number, CartItem>;
+      return clampCartByMenus(trimmed, next);
+    });
+    return next;
+  });
+};
+
+const onMenuAll = (payload: any) => {
+  if (Array.isArray(payload)) {
+    const arr = (payload as MenuItem[]).filter((m) => (m.menu_status ?? 1) === 1);
+    setMenus(arr);
+    setCart((prev) => clampCartByMenus(prev, arr));
+  } else {
+    upsertMenus(payload);
+  }
+};
+
     const onFoodTypeAll = (payload: any[]) => {
       setFoodTypes(normalizeFoodTypes(payload) as any);
     };
@@ -345,41 +411,77 @@ const filtered = useMemo(() => {
       return matchQ && matchCat;
     });
 }, [menus, q, catId]);
-
+const paginated = useMemo(() => {
+  const start = (page - 1) * pageSize;
+  return filtered.slice(start, start + pageSize);
+}, [filtered, page])
 
   // ===== Cart helpers =====
   const NOTE_MAX = 160;
-  const bump = (item: MenuItem, delta: number) => {
-    setCart((prev) => {
-      const existed = prev[item.menu_id];
-      const nextQty = (existed?.qty || 0) + delta;
-      if (nextQty <= 0) {
-        const { [item.menu_id]: _omit, ...rest } = prev;
-        return rest;
-      }
+const bump = (item: MenuItem, delta: number) => {
+  setCart((prev) => {
+    const existed = prev[item.menu_id];
+    const current = existed?.qty || 0;
+
+    // ถ้าเพิ่ม: เคารพสต็อก
+    if (delta > 0) {
+      if (!canAddOne(item, prev)) return prev; // หมดแล้ว
+      const nextQty = Math.min(99, current + 1); // จำกัดบน 99
       return {
         ...prev,
         [item.menu_id]: {
           id: item.menu_id,
           name: item.menu_name,
           price: item.menu_price,
-          qty: Math.min(99, nextQty),
+          qty: nextQty,
           img: coverOf(item) ?? undefined,
           note: existed?.note ?? "",
         },
       };
-    });
-  };
+    }
+
+    // ถ้าลด: ทำเหมือนเดิม
+    const nextQty = current + delta;
+    if (nextQty <= 0) {
+      const { [item.menu_id]: _omit, ...rest } = prev;
+      return rest;
+    }
+    return {
+      ...prev,
+      [item.menu_id]: { ...existed!, qty: nextQty },
+    };
+  });
+};
+
   const setNote = (id: number, val: string) =>
     setCart((p) => (p[id] ? { ...p, [id]: { ...p[id], note: val.slice(0, NOTE_MAX) } } : p));
-  const incCart = (id: number) => setCart((p) => ({ ...p, [id]: { ...p[id], qty: Math.min(99, (p[id]?.qty ?? 0) + 1) } }));
-  const decCart = (id: number) =>
-    setCart((p) =>
-      (p[id]?.qty ?? 0) > 1 ? { ...p, [id]: { ...p[id], qty: (p[id].qty ?? 1) - 1 } } : (() => {
-        const { [id]: _, ...rest } = p;
-        return rest;
-      })(),
-    );
+// ↓↓↓ REPLACE the old incCart with this ↓↓↓
+const incCart = (id: number) => {
+  const item = menus.find(m => m.menu_id === id);
+  if (!item) return;
+
+  setCart((p) => {
+    if (item.isLimited) {
+      const stock = typeof item.stock === "number" ? item.stock : 0;
+      const next = Math.min(99, (p[id]?.qty ?? 0) + 1);
+      if (next > stock) return p; // เกินสต็อกแล้ว ไม่เพิ่ม
+      return { ...p, [id]: { ...p[id], qty: next } };
+    }
+    return { ...p, [id]: { ...p[id], qty: Math.min(99, (p[id]?.qty ?? 0) + 1) } };
+  });
+};
+const decCart = (id: number) => {
+  const item = menus.find(m => m.menu_id === id);
+  setCart((p) => {
+    const cur = p[id]?.qty ?? 0;
+    if (cur <= 1) {
+      const { [id]: _omit, ...rest } = p;
+      return rest;
+    }
+    // ไม่ต้องเช็คสต็อกตอนลด
+    return { ...p, [id]: { ...p[id], qty: cur - 1 } };
+  });
+};
   const remove = (id: number) => setCart((p) => {
     const { [id]: _, ...rest } = p;
     return rest;
@@ -524,29 +626,82 @@ const filtered = useMemo(() => {
           }, [foodTypes, catId])}
         </div>
 
-        <div className="relative w-full rounded-2xl border border-dashed border-violet-300 bg-white/60 p-4 shadow-sm">
-          {loading ? (
-            <div className="grid min-h-[300px] place-items-center text-slate-500">กำลังโหลดเมนู…</div>
-          ) : filtered.length === 0 ? (
-            <div className="grid min-h-[300px] place-items-center text-slate-500">ไม่พบเมนูที่ตรงกับเงื่อนไข</div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
-              {filtered.map((m) => {
-                const count = ready ? (cart[m.menu_id]?.qty ?? 0) : 0;
-                return (
-                  <MenuCard
-                    key={`menu-${m.menu_id}`}
-                    item={m}
-                    count={count}
-                    onInc={() => bump(m, +1)}
-                    onDec={() => count > 0 && bump(m, -1)}
-                    onOpenDetail={() => openDetail(m)}
-                  />
-                );
-              })}
-            </div>
-          )}
+      <div className="relative w-full rounded-2xl border border-dashed border-violet-300 bg-white/60 p-4 shadow-sm">
+  {loading ? (
+    <div className="grid min-h-[300px] place-items-center text-slate-500">กำลังโหลดเมนู…</div>
+  ) : filtered.length === 0 ? (
+    <div className="grid min-h-[300px] place-items-center text-slate-500">ไม่พบเมนูที่ตรงกับเงื่อนไข</div>
+  ) : (
+    <>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+        {paginated.map((m) => {
+          const count = ready ? (cart[m.menu_id]?.qty ?? 0) : 0;
+          return (
+            <MenuCard
+              key={`menu-${m.menu_id}`}
+              item={m}
+              count={count}
+              onInc={() => bump(m, +1)}
+              onDec={() => count > 0 && bump(m, -1)}
+              onOpenDetail={() => openDetail(m)}
+            />
+          );
+        })}
+      </div>
+
+      {/* ✅ Pagination ใต้ grid */}
+      {filtered.length > pageSize && (
+        <div className="flex justify-center mt-6">
+          <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+
+            {/* ปุ่มก่อนหน้า */}
+            <Button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              variant="ghost"
+              size="sm"
+              className="px-3"
+            >
+              ก่อนหน้า
+            </Button>
+
+            {/* ปุ่มเลขหน้า */}
+            {Array.from({ length: Math.ceil(filtered.length / pageSize) }, (_, i) => i + 1).map((p) => (
+              <Button
+                key={`page-${p}`}
+                variant={p === page ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setPage(p)}
+                className={cn(
+                  "h-8 w-8 rounded-full text-sm transition",
+                  p === page
+                    ? "bg-violet-600 text-white shadow-md hover:bg-violet-700"
+                    : "text-slate-700 hover:bg-slate-100"
+                )}
+              >
+                {p}
+              </Button>
+            ))}
+
+            {/* ปุ่มถัดไป */}
+            <Button
+              onClick={() => setPage((p) => Math.min(Math.ceil(filtered.length / pageSize), p + 1))}
+              disabled={page === Math.ceil(filtered.length / pageSize)}
+              variant="ghost"
+              size="sm"
+              className="px-3"
+            >
+              ถัดไป
+            </Button>
+
+          </div>
         </div>
+      )}
+    </>
+  )}
+</div>
+
+        
       </section>
 
       {/* Cart Dialog */}
@@ -653,55 +808,85 @@ const filtered = useMemo(() => {
       </Dialog>
 
       {/* รายละเอียดเมนู */}
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="sm:max-w-2xl bg-white overflow-hidden rounded-2xl border border-slate-200 shadow-2xl">
-          {detailItem && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="text-base font-semibold">รายละเอียดเมนู</DialogTitle>
-              </DialogHeader>
-              <div className="grid gap-6 md:grid-cols-2">
-                <div className="space-y-3">
-                  <div className="relative w-full overflow-hidden rounded-lg bg-slate-100" style={{ aspectRatio: "4/3" }}>
-                    {detailActiveSrc ? (
+{/* รายละเอียดเมนู */}
+<Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+  <DialogContent className="sm:max-w-2xl bg-white overflow-hidden rounded-2xl border border-slate-200 shadow-2xl">
+    {detailItem && (
+      <>
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold">รายละเอียดเมนู</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="space-y-3">
+            <div
+              className="relative w-full overflow-hidden rounded-lg bg-slate-100"
+              style={{ aspectRatio: "4/3" }}
+            >
+              {detailActiveSrc ? (
+                <Image
+                  src={detailActiveSrc}
+                  alt={detailItem.menu_name}
+                  fill
+                  sizes="(max-width: 768px) 100vw, 50vw"
+                  className="object-cover"
+                  unoptimized
+                />
+              ) : (
+                <div className="grid h-full w-full place-items-center text-xs text-slate-400">
+                  ไม่มีรูปภาพ
+                </div>
+              )}
+            </div>
+
+            {(detailItem.MenuImages?.length ?? 0) > 1 && (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {detailItem.MenuImages!.map((im) => {
+                  const src = imgAbsUrl(im.menu_image);
+                  const active = src === detailActiveSrc;
+                  return (
+                    <button
+                      key={`thumb-${im.menu_image_id}`}
+                      type="button"
+                      onClick={() => setDetailActiveSrc(src)}
+                      className={cn(
+                        "relative h-16 w-20 shrink-0 overflow-hidden rounded-md border cursor-pointer",
+                        active
+                          ? "ring-2 ring-violet-500 border-violet-500"
+                          : "border-slate-200"
+                      )}
+                      aria-label="เปลี่ยนรูปตัวอย่าง"
+                    >
                       <Image
-                        src={detailActiveSrc}
-                        alt={detailItem.menu_name}
+                        src={src}
+                        alt=""
                         fill
-                        sizes="(max-width: 768px) 100vw, 50vw"
+                        sizes="80px"
                         className="object-cover"
                         unoptimized
                       />
-                    ) : (
-                      <div className="grid h-full w-full place-items-center text-xs text-slate-400">ไม่มีรูปภาพ</div>
-                    )}
-                  </div>
-                  {(detailItem.MenuImages?.length ?? 0) > 1 && (
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      {detailItem.MenuImages!.map((im) => {
-                        const src = imgAbsUrl(im.menu_image);
-                        const active = src === detailActiveSrc;
-                        return (
-                          <button
-                            key={`thumb-${im.menu_image_id}`}
-                            type="button"
-                            onClick={() => setDetailActiveSrc(src)}
-                            className={cn(
-                              "relative h-16 w-20 shrink-0 overflow-hidden rounded-md border cursor-pointer",
-                              active ? "ring-2 ring-violet-500 border-violet-500" : "border-slate-200",
-                            )}
-                            aria-label="เปลี่ยนรูปตัวอย่าง"
-                          >
-                            <Image src={src} alt="" fill sizes="80px" className="object-cover" unoptimized />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-                <div className="flex flex-col">
-                  <div className="text-xl font-semibold text-slate-900">{detailItem.menu_name}</div>
+          {/* ====== ขวา (รายละเอียด) ====== */}
+          <div className="flex flex-col">
+            <div className="text-xl font-semibold text-slate-900">
+              {detailItem.menu_name}
+            </div>
+
+            {(() => {
+              const limited = !!detailItem.isLimited;
+              const count = cart[detailItem.menu_id]?.qty ?? 0;
+              const left = limited
+                ? Math.max(0, (detailItem.stock ?? 0) - count)
+                : Infinity;
+              const soldOut = limited && left <= 0;
+
+              return (
+                <>
                   {typeNamesOf(detailItem).length > 0 && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <span className="text-xs text-slate-500">ประเภท:</span>
@@ -715,11 +900,32 @@ const filtered = useMemo(() => {
                       ))}
                     </div>
                   )}
-                  <div className="mt-2 text-lg font-bold text-violet-700">{money(detailItem.menu_price)}</div>
-                  {detailItem.menu_description ? (
-                    <p className="mt-2 text-sm text-slate-700 whitespace-pre-line">{detailItem.menu_description}</p>
-                  ) : null}
 
+                  {/* 🟡 Badge แสดง stock */}
+                  {limited && (
+                    <div
+                      className={cn(
+                        "mt-2 text-xs inline-flex items-center rounded-full px-2 py-0.5",
+                        soldOut
+                          ? "bg-rose-100 text-rose-700"
+                          : "bg-amber-100 text-amber-700"
+                      )}
+                    >
+                      {soldOut ? "หมดชั่วคราว" : `คงเหลือ ${left}`}
+                    </div>
+                  )}
+
+                  <div className="mt-2 text-lg font-bold text-violet-700">
+                    {money(detailItem.menu_price)}
+                  </div>
+
+                  {detailItem.menu_description && (
+                    <p className="mt-2 text-sm text-slate-700 whitespace-pre-line">
+                      {detailItem.menu_description}
+                    </p>
+                  )}
+
+                  {/* ปุ่มเพิ่ม/ลด */}
                   <div className="mt-auto pt-6 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Button
@@ -739,20 +945,30 @@ const filtered = useMemo(() => {
                         variant="secondary"
                         className="h-9 w-9 rounded-full cursor-pointer"
                         onClick={() => bump(detailItem, +1)}
+                        disabled={soldOut}
                       >
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>
-                    <Button className="cursor-pointer" onClick={() => bump(detailItem, +1)}>
+
+                    <Button
+                      className="cursor-pointer"
+                      onClick={() => bump(detailItem, +1)}
+                      disabled={soldOut}
+                    >
                       เพิ่มลงตะกร้า
                     </Button>
                   </div>
-                </div>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      </>
+    )}
+  </DialogContent>
+</Dialog>
+
 
     
     </main>

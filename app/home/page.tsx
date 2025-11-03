@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Recommended from "../components/Recommended";
-import RegisterBanner from "../components/RegisterBanner";
+// import RegisterBanner from "../components/RegisterBanner";
 import axios from "axios";
 import { config } from "../config";
 import Swal from "sweetalert2";
@@ -310,8 +310,8 @@ export default function Home() {
           </aside>
         </div>
       </section>
-
-      <RegisterBanner />
+{/* 
+      <RegisterBanner /> */}
     
     </main>
   );

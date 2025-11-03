@@ -1,15 +1,14 @@
-// service\app\components\TopNav.tsx
 "use client";
 
 import Link from "next/link";
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import Swal from "sweetalert2";
 import { Button } from "@/components/ui/button";
 import { config } from "@/app/config";
-import { readBookingSafe, clearBooking } from "@/lib/bookingStore";
+import { readBookingSafe, clearBooking, type BookingDraft } from "@/lib/bookingStore";
 
 const LS_CART_KEY = "cart:v1";
 const LS_BOOKING_KEY = "booking:v1"; // legacy (ยังลบตอน sign out)
@@ -31,7 +30,6 @@ type User = {
   roles?: Role[];
   role?: Role;
 };
-type BookingDraft = { tableId?: string; date?: string; time?: string; people?: number; savedAt?: number };
 
 export default function TopNav() {
   const router = useRouter();
@@ -42,6 +40,26 @@ export default function TopNav() {
   const [user, setUser] = useState<User | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  // === Helpers to prevent fetch loop / redundant updates ===
+  const inFlightRef = useRef(false);
+  const lastUserRef = useRef<User | null>(null);
+  const equalUser = (a: User | null, b: User | null) => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    return (
+      a.user_id === b.user_id &&
+      a.user_email === b.user_email &&
+      (a.role || "user") === (b.role || "user") &&
+      (a.user_name || "") === (b.user_name || "") &&
+      (a.user_img || "") === (b.user_img || "") &&
+      !!a.isAdmin === !!b.isAdmin &&
+      !!a.isStaff === !!b.isStaff
+    );
+  };
+
+  // =================== Cart / Booking badges ===================
   useEffect(() => {
     setMounted(true);
 
@@ -101,6 +119,7 @@ export default function TopNav() {
     };
   }, []);
 
+  // =================== User fetch & sync ===================
   useEffect(() => {
     let ignore = false;
 
@@ -113,8 +132,10 @@ export default function TopNav() {
           localStorage.removeItem(LS_USER_KEY);
           (window as any).__USER__ = null;
         }
+        // 🔔 แจ้งเปลี่ยนเฉพาะในแท็บปัจจุบัน / แท็บอื่นรับจาก storage event
         window.dispatchEvent(new CustomEvent("user:updated", { detail: u }));
-        window.dispatchEvent(new Event("user:refresh"));
+        // ⚠️ ห้าม dispatch "user:refresh" ที่นี่ เพื่อป้องกัน loop
+        // window.dispatchEvent(new Event("user:refresh"));
       } catch {}
     };
 
@@ -123,14 +144,8 @@ export default function TopNav() {
       const u = raw.user ?? raw;
       const roles: Role[] | undefined = u.roles;
       const role: Role =
-        u.role ??
-        (roles?.includes("admin")
-          ? "admin"
-          : roles?.includes("staff")
-          ? "staff"
-          : "user");
-      const ensuredUserName =
-        u.user_name ?? (typeof u.user_email === "string" ? u.user_email.split("@")[0] : null);
+        u.role ?? (roles?.includes("admin") ? "admin" : roles?.includes("staff") ? "staff" : "user");
+      const ensuredUserName = u.user_name ?? (typeof u.user_email === "string" ? u.user_email.split("@")[0] : null);
       return {
         user_id: u.user_id,
         user_name: ensuredUserName,
@@ -149,13 +164,19 @@ export default function TopNav() {
     };
 
     const fetchMe = async () => {
+      if (inFlightRef.current) return; // กันยิงซ้อน
+      inFlightRef.current = true;
       setLoadingUser(true);
       try {
         const token = localStorage.getItem("token") || localStorage.getItem("authToken");
         if (!token) {
           if (!ignore) {
-            setUser(null);
-            publishUser(null);
+            const next = null;
+            if (!equalUser(lastUserRef.current, next)) {
+              setUser(next);
+              publishUser(next);
+              lastUserRef.current = next;
+            }
           }
           return;
         }
@@ -164,18 +185,26 @@ export default function TopNav() {
         });
         const u = normalizeUser(data);
         if (!ignore) {
-          setUser(u);
-          publishUser(u);
+          if (!equalUser(lastUserRef.current, u)) {
+            setUser(u);
+            publishUser(u);
+            lastUserRef.current = u;
+          }
         }
       } catch {
         localStorage.removeItem("token");
         localStorage.removeItem("authToken");
         if (!ignore) {
-          setUser(null);
-          publishUser(null);
+          const next = null;
+          if (!equalUser(lastUserRef.current, next)) {
+            setUser(next);
+            publishUser(next);
+            lastUserRef.current = next;
+          }
         }
       } finally {
         if (!ignore) setLoadingUser(false);
+        inFlightRef.current = false;
       }
     };
 
@@ -186,11 +215,15 @@ export default function TopNav() {
       if (e.key === LS_USER_KEY) {
         try {
           const raw = e.newValue;
-          setUser(raw ? (JSON.parse(raw) as User) : null);
+          const u = raw ? (JSON.parse(raw) as User) : null;
+          if (!equalUser(lastUserRef.current, u)) {
+            setUser(u);
+            lastUserRef.current = u;
+          }
         } catch {}
       }
     };
-    const onRefresh = () => fetchMe();
+    const onRefresh = () => fetchMe(); // อนุญาตให้หน้าอื่น trigger refresh ได้
 
     window.addEventListener("storage", onStorage);
     window.addEventListener("user:refresh", onRefresh as any);
@@ -201,12 +234,10 @@ export default function TopNav() {
     };
   }, []);
 
-  const displayName =
-    user
-      ? ([user.user_fname, user.user_lname].filter(Boolean).join(" ").trim() ||
-          user.user_name ||
-          "")
-      : "";
+  // =================== Derived UI state ===================
+  const displayName = user
+    ? ([user.user_fname, user.user_lname].filter(Boolean).join(" ").trim() || user.user_name || "")
+    : "";
   const initials = (name: string) =>
     name
       .split(" ")
@@ -215,12 +246,9 @@ export default function TopNav() {
       .slice(0, 2)
       .join("");
   const imageUrl = (p?: string | null) =>
-    /^https?:\/\//i.test(String(p))
-      ? String(p)
-      : p
-      ? `${config.apiUrl}/${String(p).replace(/^\/+/, "")}`
-      : null;
+    /^https?:\/\//i.test(String(p)) ? String(p) : p ? `${config.apiUrl}/${String(p).replace(/^\/+/, "")}` : null;
 
+  // =================== Actions ===================
   const handleSignOut = async () => {
     const res = await Swal.fire({
       title: "ออกจากระบบ?",
@@ -301,21 +329,29 @@ export default function TopNav() {
     if (!user) return false;
     if (user.role === "admin" || user.role === "staff") return true;
     if (user.isAdmin === true || user.isStaff === true) return true;
-    if (Array.isArray(user.roles) && user.roles.some((r) => r === "admin" || r === "staff"))
-      return true;
+    if (Array.isArray(user.roles) && user.roles.some((r) => r === "admin" || r === "staff")) return true;
     return false;
   }, [user]);
 
   // ✅ helper: ล็อกอินอยู่ไหม (ใช้ร่วมกับ mounted และ loadingUser ป้องกัน hydration mismatch)
   const isLoggedIn = useMemo(() => !!user, [user]);
 
+  // =================== UI ===================
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b">
       <nav className="container mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button aria-label="menu" className="lg:hidden cursor-pointer">
-            <svg width="24" height="24" viewBox="0 0 24 24">
-              <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16" />
+          <button
+            aria-label="menu"
+            className="lg:hidden cursor-pointer"
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              {isMenuOpen ? (
+                <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              ) : (
+                <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              )}
             </svg>
           </button>
           <Link href="/" className="text-lg font-semibold">
@@ -437,6 +473,58 @@ export default function TopNav() {
           )}
         </div>
       </nav>
+      {isMenuOpen && (
+        <div className="lg:hidden fixed top-14 left-0 right-0 bottom-0 bg-black/20 z-40" onClick={() => setIsMenuOpen(false)} />
+      )}
+      {isMenuOpen && (
+        <div className="lg:hidden absolute top-14 left-0 w-full bg-white shadow-lg z-50">
+          <ul className="flex flex-col items-center gap-6 text-sm py-6">
+            <li>
+              <Link href="/" className="text-gray-700 hover:text-indigo-600" onClick={() => setIsMenuOpen(false)}>
+                Home
+              </Link>
+            </li>
+            <li>
+              <Link href="/table" className="text-gray-700 hover:text-indigo-600" onClick={() => setIsMenuOpen(false)}>
+                Table
+              </Link>
+            </li>
+            <li>
+              <Link href="/menu" className="text-gray-700 hover:text-indigo-600" onClick={() => setIsMenuOpen(false)}>
+                Menu
+              </Link>
+            </li>
+
+            {mounted && !loadingUser && isLoggedIn && (
+              <li>
+                <Link href="/reservations" className="text-gray-700 hover:text-indigo-600" onClick={() => setIsMenuOpen(false)}>
+                  Reservations
+                </Link>
+              </li>
+            )}
+
+            <li>
+              <Link href="/about" className="text-gray-700 hover:text-indigo-600" onClick={() => setIsMenuOpen(false)}>
+                About
+              </Link>
+            </li>
+
+            {isStaffOrAdmin && (
+              <li>
+                <Link
+                  href="http://localhost:3000/backoffice/dashboard"
+                  className="text-gray-700 hover:text-indigo-600"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  Dashboard
+                </Link>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
     </header>
   );
 }
