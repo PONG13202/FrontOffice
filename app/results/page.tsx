@@ -377,10 +377,10 @@ export default function ResultsPage() {
         date,
         time,
         people,
-        tableId,
+        tableId: tableId ?? undefined,
         tableName: tableName || prev?.tableName,
         savedAt: Date.now(),
-        reservationId,
+        reservationId: prev?.reservationId,
       };
       localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(draft));
       window.dispatchEvent(new Event("booking:changed"));
