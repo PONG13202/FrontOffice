@@ -4,7 +4,7 @@ import * as React from "react";
 import { DayPicker } from "react-day-picker";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import "react-day-picker/dist/style.css"; // ไม่ได้ใช้สไตล์หลัก แต่ช่วย reset บางส่วน (ตัดออกได้)
+import "react-day-picker/dist/style.css";
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker>;
 
@@ -40,15 +40,21 @@ export function Calendar({
           "bg-primary text-primary-foreground rounded-md",
         day_today:
           "bg-accent text-accent-foreground rounded-md",
-        day_outside:
-          "text-muted-foreground opacity-50",
-        day_disabled:
-          "text-muted-foreground opacity-50",
+        day_outside: "text-muted-foreground opacity-50",
+        day_disabled: "text-muted-foreground opacity-50",
         ...classNames,
       }}
       components={{
-        IconLeft: () => <ChevronLeft className="h-4 w-4" />,
-        IconRight: () => <ChevronRight className="h-4 w-4" />,
+        PreviousMonthButton: (props) => (
+          <button {...props}>
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+        ),
+        NextMonthButton: (props) => (
+          <button {...props}>
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        ),
       }}
       {...props}
     />
