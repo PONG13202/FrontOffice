@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { Suspense, useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
 import Swal from "sweetalert2";
@@ -31,12 +31,24 @@ interface TableVM {
   _notEnough?: boolean;
 }
 
-const toNum = (v: any) => (typeof v === "number" ? v : parseInt(String(v), 10) || 0);
-const overlap = (a1: number, a2: number, b1: number, b2: number) => a1 < b2 && b1 < a2;
+const toNum = (v: any) =>
+  typeof v === "number" ? v : parseInt(String(v), 10) || 0;
+const overlap = (a1: number, a2: number, b1: number, b2: number) =>
+  a1 < b2 && b1 < a2;
 
-function PublicTableCard({ table, onClick }: { table: TableVM; onClick: (t: TableVM) => void }) {
+function PublicTableCard({
+  table,
+  onClick,
+}: {
+  table: TableVM;
+  onClick: (t: TableVM) => void;
+}) {
   const disabled = !table.active || table._booked || table._notEnough;
-  const reason = table._booked ? "ช่วงเวลานี้ถูกจอง" : table._notEnough ? "ที่นั่งไม่พอ" : "ปิด";
+  const reason = table._booked
+    ? "ช่วงเวลานี้ถูกจอง"
+    : table._notEnough
+    ? "ที่นั่งไม่พอ"
+    : "ปิด";
 
   return (
     <div className="absolute" style={{ left: table.x, top: table.y }}>
@@ -46,16 +58,31 @@ function PublicTableCard({ table, onClick }: { table: TableVM; onClick: (t: Tabl
         tabIndex={0}
         className={cn(
           "w-[80px] h-[80px] p-1.5 shadow-md flex flex-col justify-start gap-0 relative overflow-hidden",
-          disabled ? "bg-gray-200 opacity-60 cursor-not-allowed" : "bg-white cursor-pointer hover:shadow-lg transition"
+          disabled
+            ? "bg-gray-200 opacity-60 cursor-not-allowed"
+            : "bg-white cursor-pointer hover:shadow-lg transition"
         )}
         title={disabled ? reason : `โต๊ะ ${table.name}`}
       >
         <div className="flex items-center justify-between w-full">
-          <div className="text-[10px] font-medium text-gray-700 truncate" title={table.name}>
+          <div
+            className="text-[10px] font-medium text-gray-700 truncate"
+            title={table.name}
+          >
             {table.name}
           </div>
-          <div className={cn("flex items-center gap-1 text-[9px]", disabled ? "text-gray-500" : "text-emerald-600")}>
-            <span className={cn("inline-block h-1.5 w-1.5 rounded-full", disabled ? "bg-gray-400" : "bg-emerald-500")} />
+          <div
+            className={cn(
+              "flex items-center gap-1 text-[9px]",
+              disabled ? "text-gray-500" : "text-emerald-600"
+            )}
+          >
+            <span
+              className={cn(
+                "inline-block h-1.5 w-1.5 rounded-full",
+                disabled ? "bg-gray-400" : "bg-emerald-500"
+              )}
+            />
             {disabled ? "ไม่ว่าง" : "พร้อม"}
           </div>
         </div>
@@ -67,7 +94,10 @@ function PublicTableCard({ table, onClick }: { table: TableVM; onClick: (t: Tabl
         <div className="flex-1" />
 
         <div className="pt-1">
-          <Button className="h-7 w-full rounded-lg text-[11px] leading-[1] tracking-wide px-2 active:translate-y-px" disabled={disabled}>
+          <Button
+            className="h-7 w-full rounded-lg text-[11px] leading-[1] tracking-wide px-2 active:translate-y-px"
+            disabled={disabled}
+          >
             จอง
           </Button>
         </div>
@@ -93,7 +123,13 @@ function PublicTableCanvas({
   numCols: number;
   onSelect: (t: TableVM) => void;
 }) {
-  const { minWidth, minHeight, backgroundImage, backgroundPosition, backgroundSize } = useMemo(() => {
+  const {
+    minWidth,
+    minHeight,
+    backgroundImage,
+    backgroundPosition,
+    backgroundSize,
+  } = useMemo(() => {
     const gridBasedWidth = numCols * GRID_SIZE + PADDING;
     const gridBasedHeight = numRows * GRID_SIZE + PADDING;
     let tableBasedWidth = GRID_SIZE * 4;
@@ -109,13 +145,25 @@ function PublicTableCanvas({
     const calculatedWidth = Math.max(gridBasedWidth, tableBasedWidth);
     const calculatedHeight = Math.max(gridBasedHeight, tableBasedHeight);
 
-    const verticalLines = Array.from({ length: numCols + 1 }).map(() => "linear-gradient(#e0e0e0, #e0e0e0)").join(", ");
-    const verticalPositions = Array.from({ length: numCols + 1 }).map((_, i) => `${i * GRID_SIZE}px 0`).join(", ");
-    const verticalSizes = Array.from({ length: numCols + 1 }).map(() => "1px 100%").join(", ");
+    const verticalLines = Array.from({ length: numCols + 1 })
+      .map(() => "linear-gradient(#e0e0e0, #e0e0e0)")
+      .join(", ");
+    const verticalPositions = Array.from({ length: numCols + 1 })
+      .map((_, i) => `${i * GRID_SIZE}px 0`)
+      .join(", ");
+    const verticalSizes = Array.from({ length: numCols + 1 })
+      .map(() => "1px 100%")
+      .join(", ");
 
-    const horizontalLines = Array.from({ length: numRows + 1 }).map(() => "linear-gradient(90deg, #e0e0e0, #e0e0e0)").join(", ");
-    const horizontalPositions = Array.from({ length: numRows + 1 }).map((_, i) => `0 ${i * GRID_SIZE}px`).join(", ");
-    const horizontalSizes = Array.from({ length: numRows + 1 }).map(() => "100% 1px").join(", ");
+    const horizontalLines = Array.from({ length: numRows + 1 })
+      .map(() => "linear-gradient(90deg, #e0e0e0, #e0e0e0)")
+      .join(", ");
+    const horizontalPositions = Array.from({ length: numRows + 1 })
+      .map((_, i) => `0 ${i * GRID_SIZE}px`)
+      .join(", ");
+    const horizontalSizes = Array.from({ length: numRows + 1 })
+      .map(() => "100% 1px")
+      .join(", ");
 
     return {
       minWidth: calculatedWidth,
@@ -130,16 +178,30 @@ function PublicTableCanvas({
     <div
       id="map-zone"
       className="relative rounded-lg bg-violet-50 border border-dashed"
-      style={{ backgroundImage, backgroundPosition, backgroundSize, backgroundRepeat: "no-repeat", width: `${minWidth}px`, height: `${minHeight}px` }}
+      style={{
+        backgroundImage,
+        backgroundPosition,
+        backgroundSize,
+        backgroundRepeat: "no-repeat",
+        width: `${minWidth}px`,
+        height: `${minHeight}px`,
+      }}
     >
       {tables.map((table) => (
-        <PublicTableCard key={String(table.id)} table={table} onClick={onSelect} />
+        <PublicTableCard
+          key={String(table.id)}
+          table={table}
+          onClick={onSelect}
+        />
       ))}
     </div>
   );
 }
 
-export default function PublicTablePage() {
+// ----------------------------------------------------------------------
+// 1. เปลี่ยนชื่อ Component หลักเดิมเป็น TableContent (ไม่ต้อง export default)
+// ----------------------------------------------------------------------
+function TableContent() {
   const router = useRouter();
   const search = useSearchParams();
 
@@ -148,10 +210,16 @@ export default function PublicTablePage() {
   const time = search.get("time") ?? "";
   const people = toNum(search.get("people"));
   // const durationMin = toNum(search.get("duration")) || 90;
-const DEFAULT_DURATION_MIN = 60; 
-const start = useMemo(() => (time ? new Date(`${date}T${time}:00`) : null), [date, time]);
-const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_MIN * 60000) : null), [start]);
-
+  const DEFAULT_DURATION_MIN = 60;
+  const start = useMemo(
+    () => (time ? new Date(`${date}T${time}:00`) : null),
+    [date, time]
+  );
+  const end = useMemo(
+    () =>
+      start ? new Date(start.getTime() + DEFAULT_DURATION_MIN * 60000) : null,
+    [start]
+  );
 
   const [tables, setTables] = useState<TableVM[]>([]);
   const [grid, setGrid] = useState<GridSize | null>(null);
@@ -164,8 +232,12 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
     const load = async () => {
       try {
         const [tRes, gRes] = await Promise.all([
-          axios.get<TableVM[]>(`${config.apiUrl}/table`, { headers: { "Cache-Control": "no-store" } }),
-          axios.get<GridSize>(`${config.apiUrl}/grid`, { headers: { "Cache-Control": "no-store" } }),
+          axios.get<TableVM[]>(`${config.apiUrl}/table`, {
+            headers: { "Cache-Control": "no-store" },
+          }),
+          axios.get<GridSize>(`${config.apiUrl}/grid`, {
+            headers: { "Cache-Control": "no-store" },
+          }),
         ]);
         if (!mounted) return;
         setTables((tRes.data || []).filter((x: any) => x.active));
@@ -180,7 +252,10 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
     if (!socket.connected) socket.connect();
     const refreshTables = async () => {
       try {
-        const { data } = await axios.get<TableVM[]>(`${config.apiUrl}/tables`, { headers: { "Cache-Control": "no-store" } });
+        const { data } = await axios.get<TableVM[]>(
+          `${config.apiUrl}/tables`,
+          { headers: { "Cache-Control": "no-store" } }
+        );
         setTables((data || []).filter((x: any) => x.active));
       } catch {}
     };
@@ -203,14 +278,19 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
 
   // โหลดการจองของวันนั้น ๆ เพื่อคำนวณโต๊ะที่ชนเวลา
   const fetchBusy = useCallback(async () => {
-    if (!start || !end) { setBusy(new Set()); return; }
+    if (!start || !end) {
+      setBusy(new Set());
+      return;
+    }
     try {
       const { data } = await axios.get(`${config.apiUrl}/reservation`, {
         params: { date, includeCanceled: 0 },
         headers: { "Cache-Control": "no-store" },
       });
-      const rows: Array<{ tableId: number; start: string; end: string }> = data?.data ?? [];
-      const s = start.getTime(), e = end.getTime();
+      const rows: Array<{ tableId: number; start: string; end: string }> =
+        data?.data ?? [];
+      const s = start.getTime(),
+        e = end.getTime();
       const set = new Set<number>();
       for (const r of rows) {
         if (!r.tableId) continue;
@@ -224,7 +304,9 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
     }
   }, [date, start, end]);
 
-  useEffect(() => { fetchBusy(); }, [fetchBusy]);
+  useEffect(() => {
+    fetchBusy();
+  }, [fetchBusy]);
 
   // realtime reservation → รีเฟรช busy
   useEffect(() => {
@@ -265,45 +347,44 @@ const end = useMemo(() => (start ? new Date(start.getTime() + DEFAULT_DURATION_M
   const numCols = grid?.cols ?? 10;
 
   // คลิกเลือกโต๊ะ → เซฟลง localStorage + เลือกว่าจะไป "เมนู" หรือ "สรุปการจอง"
-// goNext: ตัด duration ออก และไม่ setItem ซ้ำ
-const goNext = async (t: TableVM) => {
-  const draft = {
-    date,
-    time,
-    people: Number(people || t.seats),
-    tableId: String(t.id),
-    savedAt: Date.now(),
+  // goNext: ตัด duration ออก และไม่ setItem ซ้ำ
+  const goNext = async (t: TableVM) => {
+    const draft = {
+      date,
+      time,
+      people: Number(people || t.seats),
+      tableId: String(t.id),
+      savedAt: Date.now(),
+    };
+    try {
+      localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(draft));
+      window.dispatchEvent(new Event("booking:changed"));
+      window.dispatchEvent(new Event("cart:changed"));
+    } catch {}
+
+    const query = new URLSearchParams({
+      date: draft.date,
+      ...(draft.time ? { time: draft.time } : {}),
+      people: String(draft.people),
+      tableId: draft.tableId,
+    }).toString();
+
+    const r = await Swal.fire({
+      icon: "question",
+      title: "เลือกโต๊ะแล้ว",
+      text: "ต้องการไปเลือกอาหารเลยไหม?",
+      showCancelButton: true,
+      confirmButtonText: "ไปเลือกอาหาร",
+      cancelButtonText: "ไปหน้าสรุปการจอง",
+    });
+
+    if (r.isConfirmed) {
+      // ใช้ router.push ก็ได้ จะลื่นกว่า
+      window.location.href = "/menu";
+    } else {
+      window.location.href = `/results?${query}`;
+    }
   };
-  try {
-    localStorage.setItem(LS_BOOKING_KEY, JSON.stringify(draft));
-    window.dispatchEvent(new Event("booking:changed"));
-    window.dispatchEvent(new Event("cart:changed"));
-  } catch {}
-
-  const query = new URLSearchParams({
-    date: draft.date,
-    ...(draft.time ? { time: draft.time } : {}),
-    people: String(draft.people),
-    tableId: draft.tableId,
-  }).toString();
-
-  const r = await Swal.fire({
-    icon: "question",
-    title: "เลือกโต๊ะแล้ว",
-    text: "ต้องการไปเลือกอาหารเลยไหม?",
-    showCancelButton: true,
-    confirmButtonText: "ไปเลือกอาหาร",
-    cancelButtonText: "ไปหน้าสรุปการจอง",
-  });
-
-  if (r.isConfirmed) {
-    // ใช้ router.push ก็ได้ จะลื่นกว่า
-    window.location.href = "/menu";
-  } else {
-    window.location.href = `/results?${query}`;
-  }
-};
-
 
   return (
     <main className="min-h-screen bg-neutral-50">
@@ -312,19 +393,29 @@ const goNext = async (t: TableVM) => {
       <section className="container mx-auto max-w-6xl px-4 py-8">
         <div className="mb-4">
           <h1 className="text-2xl font-bold text-slate-900">เลือกโต๊ะนั่ง</h1>
-<p className="text-sm text-slate-600">
-  {time ? `วันที่ ${date} เวลา ${time} — แตะโต๊ะเพื่อจอง` : "ผังหน้าบ้าน (ตาราง 80px) — แตะโต๊ะเพื่อจอง"}
-</p>
-
+          <p className="text-sm text-slate-600">
+            {time
+              ? `วันที่ ${date} เวลา ${time} — แตะโต๊ะเพื่อจอง`
+              : "ผังหน้าบ้าน (ตาราง 80px) — แตะโต๊ะเพื่อจอง"}
+          </p>
         </div>
 
         <div className="relative w-full overflow-auto rounded-2xl border border-dashed border-violet-300 bg-white/60 p-3 shadow-sm">
           {loading ? (
-            <div className="grid min-h-[480px] place-items-center text-slate-500">กำลังโหลดแผนผังโต๊ะ…</div>
+            <div className="grid min-h-[480px] place-items-center text-slate-500">
+              กำลังโหลดแผนผังโต๊ะ…
+            </div>
           ) : decorated.length === 0 ? (
-            <div className="grid min-h-[480px] place-items-center text-slate-500">ยังไม่มีโต๊ะที่เปิดให้บริการ</div>
+            <div className="grid min-h-[480px] place-items-center text-slate-500">
+              ยังไม่มีโต๊ะที่เปิดให้บริการ
+            </div>
           ) : (
-            <PublicTableCanvas tables={decorated} numRows={numRows} numCols={numCols} onSelect={goNext} />
+            <PublicTableCanvas
+              tables={decorated}
+              numRows={numRows}
+              numCols={numCols}
+              onSelect={goNext}
+            />
           )}
         </div>
 
@@ -335,5 +426,22 @@ const goNext = async (t: TableVM) => {
 
       <SiteFooter />
     </main>
+  );
+}
+
+// ----------------------------------------------------------------------
+// 2. สร้าง Wrapper Component สำหรับ export default ที่มี Suspense
+// ----------------------------------------------------------------------
+export default function PublicTablePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center text-slate-500">
+          กำลังโหลด...
+        </div>
+      }
+    >
+      <TableContent />
+    </Suspense>
   );
 }

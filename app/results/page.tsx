@@ -1,7 +1,6 @@
-// app/(site)/results/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import axios from "axios";
@@ -14,7 +13,7 @@ import { config } from "@/app/config";
 
 const LS_CART_KEY = "cart:v1";
 const LS_BOOKING_KEY = "booking:v1";
-const LS_USER_KEY = "user:v1"; // รับข้อมูลผู้ใช้จาก TopNav
+const LS_USER_KEY = "user:v1";
 
 type PaymentRow = {
   id: number;
@@ -74,7 +73,10 @@ type UserInfo = {
   user_img?: string | null;
 };
 
-export default function ResultsPage() {
+// ----------------------------------------------------------------------
+// 1. เปลี่ยนชื่อ Component หลักเดิมเป็น ResultsContent (ไม่ต้อง export default)
+// ----------------------------------------------------------------------
+function ResultsContent() {
   const router = useRouter();
   const q = useSearchParams();
 
@@ -93,7 +95,6 @@ export default function ResultsPage() {
     Number.isFinite(qPeople) ? qPeople : 0
   );
 
-  // รับข้อมูลผู้ใช้จาก TopNav (ผ่าน localStorage / event)
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
@@ -116,13 +117,11 @@ export default function ResultsPage() {
       setLoadingUser(false);
     };
 
-    // 1) ลองอ่านจาก LS ก่อน
     const first = readUserFromLS();
     if (first) {
       setUser(first);
       setLoadingUser(false);
     } else {
-      // 2) ดึงจาก API ตรง (มี token)
       (async () => {
         try {
           const token =
@@ -143,7 +142,6 @@ export default function ResultsPage() {
       })();
     }
 
-    // 3) ฟัง event จาก TopNav
     const onUserUpdated = (e: Event) => {
       try {
         const anyEv = e as CustomEvent<UserInfo | null>;
@@ -157,7 +155,6 @@ export default function ResultsPage() {
       }
     };
 
-    // 4) เผื่อเปลี่ยนข้ามแท็บ
     const onStorage = (e: StorageEvent) => {
       if (e.key === LS_USER_KEY) syncFromTopNav();
     };
@@ -172,7 +169,6 @@ export default function ResultsPage() {
     };
   }, []);
 
-  // ตั้ง default date หลัง mount ถ้าไม่ถูกส่งมาจาก query
   useEffect(() => {
     if (!date) {
       try {
@@ -187,7 +183,6 @@ export default function ResultsPage() {
     }
   }, [date]);
 
-  // --------- ชื่อโต๊ะ ---------
   const [tableName, setTableName] = useState<string>(qTableName || "");
 
   const persistTableNameToBooking = (name: string) => {
@@ -207,7 +202,6 @@ export default function ResultsPage() {
   };
 
   useEffect(() => {
-    // ลำดับ: query → booking LS → API
     if (qTableName) {
       setTableName(qTableName);
       persistTableNameToBooking(qTableName);
@@ -281,7 +275,6 @@ export default function ResultsPage() {
   const [uploadingSlip, setUploadingSlip] = useState(false);
   const [polling, setPolling] = useState<boolean>(false);
 
-  // ---------- guard ----------
   useEffect(() => {
     const token =
       localStorage.getItem("token") || localStorage.getItem("authToken");
@@ -311,7 +304,6 @@ export default function ResultsPage() {
     }
   }, [q, router, tableId]);
 
-  // ---------- โหลดตะกร้า ----------
   const [items, setItems] = useState<CartLine[]>([]);
   const readCart = () => {
     try {
@@ -357,17 +349,15 @@ export default function ResultsPage() {
       itemsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [openCart]);
 
-  // ---------- สรุปยอด ----------
   const estimate = useMemo(() => {
     const itemsTotal = items.reduce(
       (a, c) => a + Number(c.price) * Number(c.qty),
       0
     );
-    const deposit = itemsTotal > 0 ? 0 : 100; // มีอาหาร → ไม่เก็บมัดจำ
+    const deposit = itemsTotal > 0 ? 0 : 100;
     return { itemsTotal, deposit, grand: itemsTotal > 0 ? itemsTotal : deposit };
   }, [items]);
 
-  // ---------- บันทึกการแก้ไข ----------
   const saveDraft = () => {
     try {
       const prevRaw = localStorage.getItem(LS_BOOKING_KEY);
@@ -395,7 +385,6 @@ export default function ResultsPage() {
     }
   };
 
-  // ---------- สร้างใบจอง ----------
   const createReservation = async () => {
     if (!tableId) return Swal.fire({ icon: "error", title: "ไม่พบรหัสโต๊ะ" });
     setCreating(true);
@@ -428,7 +417,7 @@ export default function ResultsPage() {
             date,
             time,
             people,
-            tableId,
+            tableId: tableId ?? undefined, // ใช้ ?? undefined ป้องกัน Error
             tableName: tableName || prev?.tableName || "",
             reservationId: data.reservationId,
             savedAt: Date.now(),
@@ -451,7 +440,6 @@ export default function ResultsPage() {
     }
   };
 
-  // ---------- OTP / Payment ----------
   const requestOtp = async () => {
     if (!reservationId) return;
     setSendingOtp(true);
@@ -514,7 +502,6 @@ export default function ResultsPage() {
     }
   };
 
-  // นับถอยหลัง QR
   useEffect(() => {
     if (!payment?.expiresAt) {
       setExpiresIn(0);
@@ -528,7 +515,6 @@ export default function ResultsPage() {
     return () => clearInterval(t);
   }, [payment?.expiresAt]);
 
-  // โพลเช็กสถานะการจ่าย
   useEffect(() => {
     if (status !== "AWAITING_PAYMENT" || !payment?.id) return;
     setPolling(true);
@@ -540,7 +526,6 @@ export default function ResultsPage() {
             headers: { ...authHeader(), "Cache-Control": "no-store" },
           }
         );
-        // อัปเดตสถานะล่าสุดไว้โชว์ (เช่น SUBMITTED/EXPIRED)
         setPayment((prev) => ({ ...(prev as any), ...data }));
 
         if (data.status === "PAID") {
@@ -562,7 +547,6 @@ export default function ResultsPage() {
     };
   }, [status, payment?.id]);
 
-  // อัปโหลดสลิป (ค้างไว้จนหมดเวลา)
   const uploadSlip = async () => {
     if (!payment?.id || !slip) return;
     setUploadingSlip(true);
@@ -574,7 +558,6 @@ export default function ResultsPage() {
         fd,
         { headers: { ...authHeader() } }
       );
-      // ✅ อัปเดตสถานะ + รูปสลิปที่เพิ่งอัป
       setPayment((prev) => ({ ...(prev as any), ...data.payment }));
       Swal.fire({
         icon: "success",
@@ -590,7 +573,6 @@ export default function ResultsPage() {
     }
   };
 
-  // ล้างตะกร้าเมื่อสำเร็จ
   useEffect(() => {
     if (status === "CONFIRMED") {
       try {
@@ -934,5 +916,16 @@ export default function ResultsPage() {
 
       <SiteFooter />
     </main>
+  );
+}
+
+// ----------------------------------------------------------------------
+// 2. สร้าง Wrapper Component สำหรับ export default ที่มี Suspense
+// ----------------------------------------------------------------------
+export default function ResultsPage() {
+  return (
+    <Suspense fallback={<div className="p-10 text-center">กำลังโหลดข้อมูล...</div>}>
+      <ResultsContent />
+    </Suspense>
   );
 }
