@@ -11,6 +11,7 @@ import { config } from "@/app/config";
 
 const LS_CART_KEY = "cart:v1";       // เมนู
 const LS_BOOKING_KEY = "booking:v1"; // โต๊ะ
+const LS_USER_KEY = "user:v1";       // ข้อมูลผู้ใช้ที่ TopNav กระจายให้ทุกหน้า
 
 type User = {
   user_id: number;
@@ -29,7 +30,7 @@ type BookingDraft = {
   date?: string;
   time?: string;
   people?: number;
-  duration?: number;
+  // duration?: number; // ❌ ไม่ใช้แล้ว
   savedAt?: number;
 };
 
@@ -87,6 +88,12 @@ export default function TopNav() {
     sync(); // แรกเข้า
     const onStorage = (e: StorageEvent) => {
       if (e.key === LS_CART_KEY || e.key === LS_BOOKING_KEY) sync();
+      if (e.key === LS_USER_KEY) {
+        try {
+          const raw = e.newValue;
+          setUser(raw ? (JSON.parse(raw) as User) : null);
+        } catch {}
+      }
     };
     const onCart = () => sync();
     const onBooking = () => sync();
@@ -110,41 +117,78 @@ export default function TopNav() {
     };
   }, []);
 
-  // ---------- โหลดข้อมูลผู้ใช้จาก token ----------
+  // ---------- โหลดข้อมูลผู้ใช้จาก token แล้ว "กระจาย" ให้ทุกหน้า ----------
   useEffect(() => {
     let ignore = false;
+
+    const publishUser = (u: User | null) => {
+      try {
+        if (u) {
+          localStorage.setItem(LS_USER_KEY, JSON.stringify(u));
+          (window as any).__USER__ = u;
+        } else {
+          localStorage.removeItem(LS_USER_KEY);
+          (window as any).__USER__ = null;
+        }
+        window.dispatchEvent(new CustomEvent("user:updated", { detail: u }));
+      } catch {}
+    };
 
     const fetchMe = async () => {
       setLoadingUser(true);
       try {
-        const token = localStorage.getItem("token");
+        const token = localStorage.getItem("token") || localStorage.getItem("authToken");
         if (!token) {
-          setUser(null);
+          if (!ignore) {
+            setUser(null);
+            publishUser(null);
+          }
           return;
         }
         const { data } = await axios.get(`${config.apiUrl}/user_info`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!ignore) setUser(data?.user ?? null);
+        const u: User | null = data?.user ?? null;
+        if (!ignore) {
+          setUser(u);
+          publishUser(u);
+        }
       } catch {
         // token เสีย/หมดอายุ → ลบออก
         localStorage.removeItem("token");
-        if (!ignore) setUser(null);
+        localStorage.removeItem("authToken");
+        if (!ignore) {
+          setUser(null);
+          publishUser(null);
+        }
       } finally {
         if (!ignore) setLoadingUser(false);
       }
     };
 
+    // 1) โหลดครั้งแรก
     fetchMe();
 
-    // กรณีข้ามแท็บ: ถ้า token เปลี่ยนจากแท็บอื่น ให้รีเฟรช state
+    // 2) ถ้า token เปลี่ยนจากแท็บอื่น ให้รีเฟรช state
     const onStorage = (e: StorageEvent) => {
-      if (e.key === "token") fetchMe();
+      if (e.key === "token" || e.key === "authToken") fetchMe();
+      if (e.key === LS_USER_KEY) {
+        try {
+          const raw = e.newValue;
+          setUser(raw ? (JSON.parse(raw) as User) : null);
+        } catch {}
+      }
     };
+
+    // 3) มีใครยิง event ให้รีเฟรช
+    const onRefresh = () => fetchMe();
+
     window.addEventListener("storage", onStorage);
+    window.addEventListener("user:refresh", onRefresh as any);
     return () => {
       ignore = true;
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("user:refresh", onRefresh as any);
     };
   }, []);
 
@@ -182,9 +226,17 @@ export default function TopNav() {
 
     if (res.isConfirmed) {
       localStorage.removeItem("token");
+      localStorage.removeItem("authToken");
       localStorage.removeItem("tempToken");
-      localStorage.removeItem("booking:v1");
-      localStorage.removeItem("cart:v1");
+      localStorage.removeItem(LS_BOOKING_KEY);
+      localStorage.removeItem(LS_CART_KEY);
+      localStorage.removeItem(LS_USER_KEY);
+
+      // แจ้งทุกหน้าว่าผู้ใช้เป็น null
+      try {
+        (window as any).__USER__ = null;
+        window.dispatchEvent(new CustomEvent("user:updated", { detail: null }));
+      } catch {}
 
       setUser(null);
       await Swal.fire({
@@ -207,13 +259,13 @@ export default function TopNav() {
     }
   };
 
+  // ตัด duration ออกจากลิงก์ /results (เราไม่ใช้แล้ว)
   const buildResultsUrl = (openCart: boolean) => {
     const bk = readBooking();
     const sp = new URLSearchParams();
     if (bk?.date) sp.set("date", bk.date);
     if (bk?.time) sp.set("time", bk.time);
     if (typeof bk?.people === "number" && bk.people > 0) sp.set("people", String(bk.people));
-    if (typeof bk?.duration === "number" && bk.duration > 0) sp.set("duration", String(bk.duration));
     if (bk?.tableId) sp.set("tableId", String(bk.tableId));
     if (openCart) sp.set("openCart", "1");
     const qs = sp.toString();

@@ -266,6 +266,19 @@ export default function MenuPage() {
     };
   }, []);
 
+  // helper: สร้าง URL ไปหน้า results โดยแนบค่าที่มี + ให้เปิดตะกร้า
+  const buildResultsUrl = (openCart: boolean = true) => {
+    const sp = new URLSearchParams();
+    if (booking?.date) sp.set("date", booking.date);
+    if (booking?.time) sp.set("time", booking.time);
+    if (typeof booking?.people === "number" && booking.people > 0) sp.set("people", String(booking.people));
+    if (typeof booking?.duration === "number" && booking.duration > 0) sp.set("duration", String(booking.duration));
+    if (booking?.tableId) sp.set("tableId", String(booking.tableId));
+    if (openCart) sp.set("openCart", "1");
+    const qs = sp.toString();
+    return `/results${qs ? `?${qs}` : ""}`;
+  };
+
   /* -------------------- Filter -------------------- */
   const filtered = useMemo(() => {
     const kw = q.trim().toLowerCase();
@@ -455,15 +468,7 @@ export default function MenuPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const qs = new URLSearchParams({
-                    ...(booking.date ? { date: booking.date } : {}),
-                    ...(booking.time ? { time: booking.time } : {}),
-                    ...(booking.people ? { people: String(booking.people) } : {}),
-                    ...(booking.duration ? { duration: String(booking.duration) } : {}),
-                    tableId: String(booking.tableId),
-                    openCart: "1",
-                  }).toString();
-                  router.push(`/results?${qs}`);
+                  router.push(buildResultsUrl(true));
                 }}
               >
                 ไปหน้าสรุปการจอง
@@ -626,15 +631,15 @@ export default function MenuPage() {
               <Button className="cursor-pointer" variant="ghost" onClick={clear} disabled={Object.values(cart).length === 0}>
                 ล้างตะกร้า
               </Button>
+              {/* เปลี่ยนให้ลิงก์ไปหน้า results พร้อมเปิดส่วนตะกร้า */}
               <Button
                 className="cursor-pointer"
                 onClick={() => {
-                  const payload = encodeURIComponent(JSON.stringify(Object.values(cart)));
-                  router.push(`/checkout?items=${payload}`);
+                  router.push(buildResultsUrl(true));
                 }}
                 disabled={Object.values(cart).length === 0}
               >
-                ดำเนินการต่อ
+                ไปหน้าสรุปการจอง
               </Button>
             </div>
           </div>
