@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
         port: "5000",
         pathname: "/uploads/**", // หรือ "/**" ถ้าอยากอนุญาตทุก path
       },
+      {
+        protocol: "https",
+        hostname: "sailom-api.vercel.app", // 👈 ใส่ตัวสั้นนี้เลยครับ
+        pathname: "/uploads/**",
+      },
 
       // รูปโปรไฟล์จาก Google (แนะนำใส่หลาย subdomain เผื่อสลับ)
       { protocol: "https", hostname: "lh1.googleusercontent.com", pathname: "/**" },

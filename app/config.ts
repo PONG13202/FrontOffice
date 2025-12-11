@@ -1,6 +1,7 @@
 export const config = {
-  apiUrl: "http://localhost:5000",
+  // ให้ใช้ค่าจาก Environment Variable ก่อน ถ้าไม่มี (เช่นตอนรันในเครื่อง) ค่อยใช้ localhost
+  apiUrl: process.env.NEXT_PUBLIC_API_URL || "https://sailom-api.vercel.app",
 };
 // export const config = {
-//   apiUrl: "https://presupplemental-copesetic-ashley.ngrok-free.dev",
+//   apiUrl: "http://localhost:5000",
 // };
