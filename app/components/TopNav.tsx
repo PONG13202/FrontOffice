@@ -394,12 +394,14 @@ export default function TopNav() {
 
           {isStaffOrAdmin && (
             <li>
-              <Link
-                href="http://localhost:3000/backoffice/dashboard"
-                className="text-gray-700 hover:text-indigo-600"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
+<Link
+  href="http://localhost:3000/backoffice/dashboard"
+  // href="https://presupplemental-copesetic-ashley.ngrok-free.dev/backoffice/dashboard"
+  className="text-gray-700 hover:text-indigo-600"
+  target="_blank"
+  rel="noopener noreferrer"
+>
+
                 Dashboard
               </Link>
             </li>
@@ -511,13 +513,14 @@ export default function TopNav() {
 
             {isStaffOrAdmin && (
               <li>
-                <Link
-                  href="http://localhost:3000/backoffice/dashboard"
-                  className="text-gray-700 hover:text-indigo-600"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setIsMenuOpen(false)}
-                >
+<Link
+  href="http://localhost:3000/backoffice/dashboard"
+  // href="https://presupplemental-copesetic-ashley.ngrok-free.dev/backoffice/dashboard"
+  className="text-gray-700 hover:text-indigo-600"
+  target="_blank"
+  rel="noopener noreferrer"
+>
+
                   Dashboard
                 </Link>
               </li>
